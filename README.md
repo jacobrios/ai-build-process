@@ -2,7 +2,7 @@
 
 **The rules, checklists and automated guardrails I direct AI coding work under.**
 
-These are the real files. They load into every session on my machine, the hooks in here actually block tool calls, and the templates are copied into new projects at setup. [Interplanetary Groups](https://interplanetarygroups.com) is a live product built under them; its repo is private for now.
+These are the real files. They load into every session on my machine, the hooks in here actually block tool calls, and the templates are copied into new projects at setup. For example, [Interplanetary Groups](https://interplanetarygroups.com) is a live product built under them; its repo is private for now.
 
 ---
 
