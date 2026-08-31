@@ -15,6 +15,11 @@
 // machine, and this repo mirrors that layout so they resolve here too. The one
 // file excluded from the mirror is settings.json; see EXCLUDED below.
 //
+// No test covers this script. It was verified by hand on 31 Aug 2026: a
+// modified file and an orphaned one were both detected and repaired, and
+// --check exited nonzero while the mirror was stale. A test belongs in
+// whatever change next touches this file.
+//
 // Usage:  node tools/sync-from-source.mjs [--check]
 //   --check exits nonzero if the mirror is out of date, and writes nothing.
 
