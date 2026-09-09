@@ -78,6 +78,18 @@ const ACCEPT_CMD = process.env.SAFETY_NET_TEMPLATE_DIR
 
 const EXCEPTIONS_PATH = join(".claude", "safety-net-exceptions.json")
 
+// Which template files have actually run inside a real project. Default is
+// unproven: a file absent from it is reported as never having run anywhere, so
+// silence means not-yet-trusted rather than fine. Added 3 September 2026 after
+// suite-lock.mjs shipped a deadlock its own green tests could not have caught,
+// because they only covered cases its author had thought of. This check could
+// say a file was missing; nothing could say it had never been run.
+const PROVENANCE_PATH = join(TEMPLATE_DIR, "provenance.json")
+
+const PROVE_CMD = process.env.SAFETY_NET_TEMPLATE_DIR
+  ? `node ${join(CLAUDE_HOME, "bin", "record-safety-net-proof.mjs")}`
+  : "node ~/.claude/bin/record-safety-net-proof.mjs"
+
 // Sessions resumed or cleared still deserve the report; a compaction is the same
 // session continuing and would just repeat it.
 const SILENT_SOURCES = new Set(["compact"])
@@ -137,6 +149,19 @@ function collectTemplateSet() {
   return set
 }
 
+function readProvenance() {
+  if (!existsSync(PROVENANCE_PATH)) return { proven: {}, unreadable: false }
+  try {
+    const parsed = JSON.parse(readFileSync(PROVENANCE_PATH, "utf8"))
+    const proven = parsed && typeof parsed.proven === "object" ? parsed.proven : {}
+    return { proven: proven || {}, unreadable: false }
+  } catch {
+    // Same choice as the exceptions file: an unreadable record is reported, not
+    // silently treated as empty, because empty would call every file unproven.
+    return { proven: {}, unreadable: true }
+  }
+}
+
 function readExceptions(projectRoot) {
   const path = join(projectRoot, EXCEPTIONS_PATH)
   if (!existsSync(path)) return { accepted: {}, unreadable: false }
@@ -171,16 +196,28 @@ function main() {
 
   const { accepted, unreadable } = readExceptions(projectRoot)
 
+  const { proven, unreadable: provenanceUnreadable } = readProvenance()
+  const isProven = (name) => Boolean(proven[name])
+  // Provenance is recorded against the implementation file, not its test.
+  const provable = (name) => name.endsWith(".mjs")
+
   const missing = []
   const expired = []
   const differs = []
+  const unprovenInUse = []
 
   for (const name of collectTemplateSet()) {
     const templatePath = join(TEMPLATE_DIR, name)
     const projectPath = join(hooksDir, name)
     const present = existsSync(projectPath)
 
-    if (present && readFileSync(projectPath).equals(readFileSync(templatePath))) continue
+    if (present && readFileSync(projectPath).equals(readFileSync(templatePath))) {
+      // Running a file nobody has ever proven is the case this check was added
+      // for, and it is invisible from every other angle: identical to the
+      // template, so nothing else here has anything to say about it.
+      if (provable(name) && !isProven(name)) unprovenInUse.push(name)
+      continue
+    }
 
     const note = accepted[name]
     if (note && typeof note === "object") {
@@ -193,7 +230,8 @@ function main() {
     else missing.push(name)
   }
 
-  if (!missing.length && !expired.length && !differs.length && !unreadable) return ""
+  if (!missing.length && !expired.length && !differs.length && !unprovenInUse.length && !unreadable && !provenanceUnreadable)
+    return ""
 
   const lines = []
   const rel = (name) => `.claude/hooks/${name}`
@@ -204,11 +242,24 @@ function main() {
 
   // Missing first: a file the project never had is usually a capability it never
   // picked up, and it is the one case a passing test suite will never reveal.
+  const neverRun = (name) =>
+    `  note:     ${name} has never run inside a project, so it is unproven rather than merely unadopted`
+
   for (const name of missing) {
     lines.push(`safety nets: the template has ${name} and this project does not`)
     lines.push(`  see it:   cat ${tpl(name)}`)
     lines.push(adopt(name))
+    if (provable(name) && !isProven(name)) lines.push(neverRun(name))
     lines.push(keep(name, "why this project does without it"))
+  }
+
+  // Adopted, identical to the template, and never proven anywhere. Worth saying
+  // because this project is the one in a position to prove it, and because a
+  // green suite here is exactly what turns unproven into proven.
+  for (const name of unprovenInUse) {
+    lines.push(`safety nets: this project runs ${name}, which has never been recorded as proven anywhere`)
+    lines.push(`  what that means: its own tests have not been seen green inside any real project's suite`)
+    lines.push(`  record it: ${PROVE_CMD} ${name} <project> "what ran and passed"`)
   }
 
   for (const { name, note, present } of expired) {
@@ -233,6 +284,12 @@ function main() {
   if (unreadable) {
     lines.push(
       `safety nets: ${EXCEPTIONS_PATH} could not be read, so no accepted difference counted this session`
+    )
+  }
+
+  if (provenanceUnreadable) {
+    lines.push(
+      `safety nets: ${PROVENANCE_PATH} could not be read, so nothing counted as proven this session`
     )
   }
 

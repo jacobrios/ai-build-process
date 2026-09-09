@@ -43,6 +43,7 @@
 //
 // TO CHANGE WHAT IS ALLOWED, edit extraAllowedRoots() below.
 
+import { execFileSync } from "node:child_process"
 import { existsSync, realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { homedir } from "node:os"
@@ -116,6 +117,53 @@ const REMOTE_WRITE_SUBCOMMANDS = new Set([
   "add", "remove", "rm", "rename", "set-url", "set-head", "set-branches", "prune",
 ])
 
+// THE WORKTREE EXCEPTION (added 4 September 2026)
+// A git worktree is a second working directory for the SAME repository, and this
+// project puts them at `.claude/worktrees/<name>` inside the main checkout. The fence
+// is drawn by path prefix, so from a worktree the main checkout reads as a different
+// project and the merge-resync rule in CLAUDE.md ("pull main, delete the merged
+// branch") could not run. Two conditions together, never one, let it through: the two
+// directories share a repository, AND the verb is one of two chores.
+//
+// Deliberately NOT a blanket same-repo widening. `checkout`, `reset`, `clean` and the
+// rest can move a live session's working tree, which is the 1 Sept 2026 incident that
+// branch-cut-guard.mjs exists for. Each chore below is additionally safe because git
+// itself refuses the destructive case: `--ff-only` cannot discard a commit, and `-d`
+// cannot delete an unmerged branch.
+//
+// Worth knowing before extending this: the guard's cross-session protection was never
+// symmetric. A session in the MAIN checkout can already `reset --hard` a worktree,
+// because the worktree sits inside its root and passes the prefix test. That gap is
+// older than this exception and is recorded in decisions/access-protections.md.
+function isWorktreeChore(verb, args) {
+  if (verb === "pull") return args.includes("--ff-only")
+  if (verb === "branch") {
+    const forced = args.some((a) => a === "-D" || a === "-f" || a === "--force")
+    return !forced && args.some((a) => a === "-d" || a === "--delete")
+  }
+  return false
+}
+
+// Asked of git rather than inferred from paths, since a worktree can live anywhere.
+// Only ever reached after the path check has already failed AND the verb is a chore,
+// so the common path stays free of subprocesses. Any failure answers "no", so an
+// unreadable or missing directory leaves the block standing.
+function sameRepository(a, b) {
+  const commonDir = (dir) => {
+    const out = execFileSync("git", ["-C", dir, "rev-parse", "--git-common-dir"], {
+      encoding: "utf8",
+      timeout: 2000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim()
+    return realpathSync(resolve(dir, out))
+  }
+  try {
+    return commonDir(a) === commonDir(b)
+  } catch {
+    return false
+  }
+}
+
 // Returns true when this particular invocation writes. `args` excludes the verb itself.
 function gitVerbWrites(verb, args) {
   if (ALWAYS_MUTATING.has(verb)) return true
@@ -178,7 +226,7 @@ function tokenize(segment) {
 // A token is unresolvable if it interpolates a variable or substitutes a command.
 const isUnresolvable = (t) => /[$`*?]/.test(t)
 
-function checkBashCommand(command, cwd, isAllowed) {
+function checkBashCommand(command, cwd, isAllowed, projectDir) {
   // Split on shell separators, preserving order so `cd X && git commit` is understood.
   const segments = command.split(/(?:&&|\|\||;|\||\n)/)
   let currentDir = cwd
@@ -223,7 +271,10 @@ function checkBashCommand(command, cwd, isAllowed) {
       const verbArgs = verbIndex === -1 ? [] : rest.slice(verbIndex + 1)
 
       if (verb && gitVerbWrites(verb, verbArgs) && !isAllowed(gitDir)) {
-        return { path: gitDir, why: `\`git ${verb}\` would write to a repository outside this project` }
+        const chore = isWorktreeChore(verb, verbArgs) && sameRepository(gitDir, projectDir)
+        if (!chore) {
+          return { path: gitDir, why: `\`git ${verb}\` would write to a repository outside this project` }
+        }
       }
       continue
     }
@@ -298,7 +349,7 @@ process.stdin.on("end", () => {
   }
 
   if (data.tool_name === "Bash" || typeof toolInput.command === "string") {
-    const hit = checkBashCommand(toolInput.command || "", shellCwd, isAllowed)
+    const hit = checkBashCommand(toolInput.command || "", shellCwd, isAllowed, projectDir)
     if (hit) deny(hit.path, hit.why)
     process.exit(0)
   }

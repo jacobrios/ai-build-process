@@ -2,6 +2,14 @@
 
 Referenced from the QA-script rule in `~/.claude/CLAUDE.md`, which carries the obligation; this file carries the full procedure. Run it every time a PR is opened, unprompted. The lineage (what produced each requirement) is in `~/.claude/decisions/rule-lineage.md`.
 
+## Before the PR is opened: run the production build
+
+- Run the project's real production build, not just the test suite, and put the result in the PR body beside the test numbers.
+- Why: the suite and the build are different instruments, and only one of them is what deploys. Vitest does not typecheck; Vercel runs `tsc` during the build. On 4 September 2026 an adopted test file carried 24 TypeScript errors, four consecutive green suites said nothing about them, and three production deploys failed in a row. Production served three-hour-old code throughout, including a fix for a live bug. Vercel emailed on every failure, so the alarm worked; what was missing was any gate before the merge.
+- Per PR, not per task. A build on every task-finish would add 20 to 30 seconds to a gate that already costs 71 seconds, to catch a failure class that is rare.
+- In a worktree, use the fallback bundler when the project's default refuses a symlinked dependency directory. In interplanetary-groups that means webpack, since Turbopack will not accept a symlinked `node_modules`.
+- A red build blocks the PR; it is not a line in the body. If it cannot be fixed, say so in chat rather than opening the PR quietly.
+
 ## The script
 
 - A short checklist the product manager can run in about five minutes, never more than ten: exact things to type or click, and what to look for.

@@ -1,0 +1,66 @@
+{
+  "_comment": [
+    "Which template files have actually RUN inside a real project, as opposed to",
+    "merely existing here and looking finished.",
+    "",
+    "Written after suite-lock.mjs shipped with a deadlock on 3 September 2026. Its",
+    "own tests were green, but they only covered cases its author had thought of;",
+    "the case that broke it was already sitting in the project it was written for,",
+    "and adoption found it in minutes. The drift checker could say a file was",
+    "missing from a project. Nothing could say it had never been run anywhere.",
+    "",
+    "The default is unproven. A file absent from `proven` below is reported as",
+    "never having run, so silence means not-yet-trusted rather than fine.",
+    "",
+    "The bar is narrow on purpose: a file is proven when ITS OWN TESTS RAN GREEN",
+    "inside a real project's suite. Being copied in is not proof, and neither is",
+    "being read and approved. Record it with:",
+    "  node ~/.claude/bin/record-safety-net-proof.mjs <file> <project> \"<what ran>\"",
+    "",
+    "Provenance is per file, not per version. Whoever changes a file materially",
+    "removes its entry, which is the same judgment the copy-improvements-back rule",
+    "already asks for.",
+    "",
+    "Entries marked backfilled were not observed being recorded; they were",
+    "reconstructed on 3 September 2026 from what is checkable now. They are the",
+    "weakest entries here and should be replaced by an observed run when one",
+    "happens, rather than trusted as if someone had watched them pass."
+  ],
+  "proven": {
+    "protect-paths.mjs": {
+      "project": "interplanetary-groups",
+      "on": "2026-08-03",
+      "how": "backfilled: present there with protect-paths.test.ts alongside it, last touched on this date, and that project's suite was green at 1730 on 3 Sept 2026",
+      "backfilled": true
+    },
+    "run-tests-unless-docs.mjs": {
+      "project": "interplanetary-groups",
+      "on": "2026-08-13",
+      "how": "backfilled: present there with run-tests-unless-docs.test.ts alongside it, which is also the test whose nested vitest exposed the suite-lock deadlock, so it demonstrably runs",
+      "backfilled": true
+    },
+    "full-suite-on-subagent-stop.mjs": {
+      "project": "interplanetary-groups",
+      "on": "2026-08-13",
+      "how": "backfilled: present there with full-suite-on-subagent-stop.test.ts alongside it, last touched on this date",
+      "backfilled": true
+    },
+    "suite-stamp.mjs": {
+      "project": "interplanetary-groups",
+      "on": "2026-08-12",
+      "how": "backfilled: present there with suite-stamp.test.ts alongside it, last touched on this date",
+      "backfilled": true
+    },
+    "project-root.mjs": {
+      "project": "interplanetary-groups",
+      "on": "2026-08-13",
+      "how": "backfilled, and indirectly: it has no tests of its own anywhere, but both hook test files import it, so a break in it turns them red",
+      "backfilled": true
+    },
+    "suite-lock.mjs": {
+      "project": "interplanetary-groups",
+      "on": "2026-09-04",
+      "how": "22 tests green in its suite (1777/149) and on main at 7cfe9cd; overlap proof: a second run waited 52s then succeeded, heartbeat advanced mid-run"
+    }
+  }
+}

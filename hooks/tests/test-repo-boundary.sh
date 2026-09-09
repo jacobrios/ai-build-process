@@ -161,5 +161,42 @@ bash_check 2 "move a tracked file out"           "\"mv docs/notes.txt /private/t
 bash_check 0 "move within the project"           '"mv src/a.ts src/b.ts"'
 
 echo
+echo "WORKTREE RESYNC — a worktree and its main checkout are one repository"
+# Real fixture rather than fake paths: the hook asks git whether two directories
+# share a repository, so only a real worktree can exercise that answer. Built and
+# torn down here so the suite never depends on a worktree that happens to exist.
+# NOT under mktemp: macOS puts that in /private/var/folders, which is already an
+# allowed root, so a fixture there sits inside the fence and every case passes for
+# the wrong reason. (Caught by watching the must-stay-blocked cases go green.)
+WT_ROOT="$H/code/.repo-boundary-fixture-$$"
+trap 'rm -rf "$WT_ROOT"' EXIT
+WT_MAIN="$WT_ROOT/main"
+git init -q "$WT_MAIN" 2>/dev/null
+git -C "$WT_MAIN" -c user.email=t@t -c user.name=t commit -q --allow-empty -m seed
+git -C "$WT_MAIN" worktree add -q "$WT_MAIN/.claude/worktrees/wt" -b wt 2>/dev/null
+WT="$WT_MAIN/.claude/worktrees/wt"
+wt_check() {
+  anchored_check "$1" "$2" "{\"tool_name\":\"Bash\",\"cwd\":\"$WT\",\"tool_input\":{\"command\":$3}}" "$WT"
+}
+
+# The two chores the merge-resync rule needs. Both refuse destructive cases in git
+# itself: --ff-only cannot discard commits, -d cannot delete an unmerged branch.
+wt_check 0 "catch up the main checkout"          "\"git -C $WT_MAIN pull --ff-only\""
+wt_check 0 "delete the merged branch"            "\"git -C $WT_MAIN branch -d slice\""
+
+# Everything that could move a live session's working tree stays blocked. These are
+# what make this a short list of chores rather than "same repo, do what you like".
+wt_check 2 "a pull that may not fast-forward"    "\"git -C $WT_MAIN pull\""
+wt_check 2 "force-delete an unmerged branch"     "\"git -C $WT_MAIN branch -D slice\""
+wt_check 2 "delete with --force"                 "\"git -C $WT_MAIN branch --delete --force slice\""
+wt_check 2 "switch the main checkout's branch"   "\"git -C $WT_MAIN checkout main\""
+wt_check 2 "reset the main checkout"             "\"git -C $WT_MAIN reset --hard origin/main\""
+wt_check 2 "wipe the main checkout's untracked"  "\"git -C $WT_MAIN clean -fd\""
+
+# The load-bearing one: the widening is same-repository only, never same-machine.
+wt_check 2 "the same chore in a DIFFERENT repo"  "\"git -C $OTHER pull --ff-only\""
+rm -rf "$WT_ROOT"
+
+echo
 echo "  $pass passed, $fail failed"
 [ "$fail" = 0 ] || exit 1

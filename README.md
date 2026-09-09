@@ -45,7 +45,7 @@ The rules in this repo serve those two gates: making a check specific enough to 
 
 ## What is deliberately not here
 
-**`settings.json`.** The live one carries a block profiling other projects: their deploy URLs, how their secrets are held, which branches nothing mechanically protects. No credentials, but an operational map of other repositories. The hook wiring it holds is in `hooks/` and the template's README.
+**`settings.json`, and the decision record explaining it.** The live configuration carries a block profiling other projects: their deploy URLs, how their secrets are held, which branches nothing mechanically protects. No credentials, but an operational map of other repositories. `decisions/access-protections.md`, which is the reasoning behind that configuration, is held back for the same reason: it is that map again, in more readable prose. Not because it admits the guards have gaps. Each hook here documents its own limits in its own header, deliberately, and a guard whose weaknesses are only in the author's head is worth less than one whose weaknesses are written down. What that record adds is aggregation: every gap, every permission, and every repository in one place, which is a different object from any one of them. Other files here point at it by name; those links resolve on the working machine and not in this copy. The hook wiring it holds is in `hooks/` and the template's README.
 
 **Conversation transcripts, plugin caches, and anything machine-specific.** Those live in the private configuration backup this repo is drawn from.
 
