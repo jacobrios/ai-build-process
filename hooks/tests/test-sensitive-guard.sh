@@ -2,7 +2,8 @@
 # Test harness for ~/.claude/hooks/sensitive-read-guard.mjs
 # Exit 0 = allowed, exit 2 = blocked.
 
-HOOK=~/.claude/hooks/sensitive-read-guard.mjs
+HOOKS="$(cd "$(dirname "$0")/.." && pwd)"
+HOOK="$HOOKS/sensitive-read-guard.mjs"
 H=$(echo ~)
 pass=0; fail=0
 

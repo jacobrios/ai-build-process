@@ -5,7 +5,8 @@
 # The "MUST STILL WORK" block is the most important section: a false positive here
 # would break ordinary development, and a guardrail that breaks work gets disabled.
 
-HOOK=~/.claude/hooks/repo-boundary.mjs
+HOOKS="$(cd "$(dirname "$0")/.." && pwd)"
+HOOK="$HOOKS/repo-boundary.mjs"
 H=$(echo ~)
 PROJ="$H/code/interplanetary-groups-oneshot"
 OTHER="$H/code/interplanetary-groups"
