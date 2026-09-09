@@ -12,16 +12,25 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 fail=0
 
-echo "Checking repo boundary guard (keeps edits inside the current project)..."
-bash "$DIR/test-repo-boundary.sh" | tail -2 || fail=1
+# Piping to tail would report tail's exit status, not the suite's, so this
+# script said "working" over 86 failing assertions until 9 September 2026.
+# Run, keep the status, then show the tail.
+run() {
+  echo "$2..."
+  local out rc
+  out=$(bash "$DIR/$1.sh" 2>&1); rc=$?
+  echo "$out" | tail -2
+  [ "$rc" = 0 ] || fail=1
+  echo
+}
 
-echo
-echo "Checking sensitive read guard (blocks secrets and personal folders)..."
-bash "$DIR/test-sensitive-guard.sh" | tail -2 || fail=1
+run test-repo-boundary   "Checking repo boundary guard (keeps edits inside the current project)"
+run test-sensitive-guard "Checking sensitive read guard (blocks secrets and personal folders)"
+run test-branch-cut-guard "Checking branch cut guard (a new slice starts from a current main)"
+run test-safety-net-drift "Checking safety-net drift report"
 
-echo
 if [ "$fail" = 0 ]; then
-  echo "Both guards are working."
+  echo "All guards are working."
 else
   echo "SOMETHING IS WRONG. A guard is not blocking what it should."
   echo "Until it is fixed, assume Claude can reach files you expect to be protected."

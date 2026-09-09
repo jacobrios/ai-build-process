@@ -153,9 +153,9 @@ naming it.
 
 `db-which.ts` and `db-which.test.ts` are the database identity check: the
 sanctioned way to ask "which environment is this checkout pointed at" without
-reading `.env` into a transcript, where it sits next to the credentials. Copied
-verbatim from interplanetary-groups on 31 July 2026, Supabase specifics and
-all, because the design is the part worth keeping: a pure parsing core with a
+reading `.env` into a transcript, where it sits next to the credentials. Copied from
+interplanetary-groups on 31 July 2026, with the expected ref blanked, because
+the design is the part worth keeping: a pure parsing core with a
 thin CLI wrapper, a cross-check that every env source agrees on one project
 ref, an `--expect` flag that proves the check can fail, and a test asserting
 the output can never contain a secret. To adapt for a new project, change: the

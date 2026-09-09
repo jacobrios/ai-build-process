@@ -11,14 +11,14 @@
 // Run it:            npm run db:which
 // Prove it can fail: npm run db:which -- --expect not-the-real-ref
 //
-// The expected ref below is claim-turned-fact: it was first printed by this script,
-// then confirmed against the Supabase dashboard during PR review. If it ever needs
-// to change, that same dashboard confirmation is the bar.
+// Set EXPECTED_DEV_TEST_REF below when you copy this file. Confirm the value
+// against the Supabase dashboard rather than trusting what this script prints;
+// a ref confirmed only by the thing being checked proves nothing.
 import "dotenv/config"
 
-// interplanetary-groups-dev-test. First printed by this script, to be confirmed
-// against the Supabase dashboard during PR review (see the PR description).
-const EXPECTED_DEV_TEST_REF = "pxbewardwvoyqqcvogel"
+// Your dev-test project ref: the <ref> in https://<ref>.supabase.co. Empty on
+// purpose, so an unconfigured copy stops instead of checking someone else's database.
+const EXPECTED_DEV_TEST_REF = ""
 
 // https://<ref>.supabase.co → ref
 export function extractSupabaseRef(url: string | undefined): string | null {
@@ -77,6 +77,11 @@ export function judge(env: Record<string, string | undefined>, expected: string)
 function main(): void {
   const expectIndex = process.argv.indexOf("--expect")
   const expected = expectIndex !== -1 && process.argv[expectIndex + 1] ? process.argv[expectIndex + 1] : EXPECTED_DEV_TEST_REF
+
+  if (!expected) {
+    console.error("STOP: EXPECTED_DEV_TEST_REF is unset. Set it at the top of this file to your dev-test project ref.")
+    process.exit(1)
+  }
 
   const verdict = judge(process.env, expected)
 

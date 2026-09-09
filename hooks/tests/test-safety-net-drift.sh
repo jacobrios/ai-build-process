@@ -11,8 +11,9 @@
 
 # Overridable so a deliberately broken copy can be run through the same suite, to
 # prove these assertions can actually fail. Normal runs need neither variable.
-HOOK=${DRIFT_HOOK:-~/.claude/hooks/safety-net-drift.mjs}
-ACCEPT=${DRIFT_ACCEPT:-~/.claude/bin/accept-safety-net-difference.mjs}
+HOOKS="$(cd "$(dirname "$0")/.." && pwd)"
+HOOK=${DRIFT_HOOK:-"$HOOKS/safety-net-drift.mjs"}
+ACCEPT=${DRIFT_ACCEPT:-"$HOOKS/../bin/accept-safety-net-difference.mjs"}
 ROOT=$(mktemp -d)
 TPL="$ROOT/tpl"
 pass=0; fail=0
