@@ -28,6 +28,16 @@ printf 'hook beta v1\n'         > "$TPL/beta.mjs"
 printf '# readme\n'             > "$TPL/README.md"      # not a hook, never compared
 printf '{"hooks":{}}\n'         > "$TPL/settings.json"  # goes to .claude/, not hooks/
 printf 'export const x = 1\n'   > "$TPL/db-which.ts"    # goes to the project's lib
+# Both fixture hooks are recorded as proven, so "everything matches" means
+# matching AND proven. The unproven case gets its own section at the end, which
+# is where that behaviour is actually asserted.
+cat > "$TPL/provenance.json" <<'JSON'
+{ "proven": {
+    "alpha.mjs": { "project": "fixture", "on": "2026-01-01", "how": "fixture" },
+    "beta.mjs":  { "project": "fixture", "on": "2026-01-01", "how": "fixture" }
+} }
+JSON
+
 mkdir -p "$TPL/node_modules/whatever"
 
 # mkproj <name> — a project whose hooks match the template exactly
@@ -178,6 +188,46 @@ says "a second acceptance keeps the first" "$(cat "$P/.claude/safety-net-excepti
 silent "  and both files go quiet" "$(run "$P")"
 
 P=$(mkproj corrupt); printf 'changed\n' > "$P/.claude/hooks/alpha.mjs"
+# ---------------------------------------------------------------------------
+# UNPROVEN — a file can be adopted, identical, and still never have run anywhere
+echo ""
+echo "UNPROVEN — adopted and identical is not the same as proven"
+
+printf 'hook gamma v1\n' > "$TPL/gamma.mjs"          # in the template, in no provenance entry
+P=$(mkproj unproven); cp "$TPL/gamma.mjs" "$P/.claude/hooks/"
+OUT=$(run "$P")
+says     "an adopted but unproven file is reported"   "$OUT" "this project runs gamma.mjs, which has never been recorded as proven anywhere"
+says     "  and says what proven would mean"          "$OUT" "its own tests have not been seen green inside any real project's suite"
+says     "  and offers the way to record it"          "$OUT" "record-safety-net-proof.mjs gamma.mjs"
+says_not "  and stays silent about proven files"      "$OUT" "alpha.mjs, which has never"
+
+P=$(mkproj unproven-missing); rm -f "$P/.claude/hooks/gamma.mjs"
+OUT=$(run "$P")
+says     "a missing unproven file says so on the missing line" "$OUT" "gamma.mjs has never run inside a project, so it is unproven"
+
+cat > "$TPL/provenance.json" <<'JSON'
+{ "proven": {
+    "alpha.mjs": { "project": "fixture", "on": "2026-01-01", "how": "fixture" },
+    "beta.mjs":  { "project": "fixture", "on": "2026-01-01", "how": "fixture" },
+    "gamma.mjs": { "project": "fixture", "on": "2026-01-02", "how": "its tests ran green there" }
+} }
+JSON
+P=$(mkproj proven-now); cp "$TPL/gamma.mjs" "$P/.claude/hooks/"
+silent   "recording proof makes it stay quiet"        "$(run "$P")"
+
+printf 'not json at all\n' > "$TPL/provenance.json"
+P=$(mkproj prov-unreadable); cp "$TPL/gamma.mjs" "$P/.claude/hooks/"
+says     "an unreadable provenance file is reported, not silently ignored" "$(run "$P")" "could not be read, so nothing counted as proven"
+
+# Restore the fixture for anything that runs after this section.
+cat > "$TPL/provenance.json" <<'JSON'
+{ "proven": {
+    "alpha.mjs": { "project": "fixture", "on": "2026-01-01", "how": "fixture" },
+    "beta.mjs":  { "project": "fixture", "on": "2026-01-01", "how": "fixture" }
+} }
+JSON
+rm -f "$TPL/gamma.mjs"
+
 printf '{{{' > "$P/.claude/safety-net-exceptions.json"
 (cd "$P" && env CLAUDE_PROJECT_DIR="$P" SAFETY_NET_TEMPLATE_DIR="$TPL" node "$ACCEPT" alpha.mjs "a perfectly good reason here" >/dev/null 2>&1)
 [ $? != 0 ] && ok "refuses to overwrite an unreadable exceptions file" || bad "refuses to overwrite corrupt file" "exit 0"
@@ -187,3 +237,4 @@ printf '{{{' > "$P/.claude/safety-net-exceptions.json"
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" = 0 ] || exit 1
+

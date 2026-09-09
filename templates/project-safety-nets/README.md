@@ -53,6 +53,62 @@ keyed by a hash of the project path, so nothing runtime enters the repo.
 it and neither should own it. This is load-bearing rather than tidy-up: see the
 12 August entry under "Keeping this current."
 
+`provenance.json` records which files here have actually RUN inside a real
+project, as opposed to existing here and looking finished. The default is
+unproven, so a file absent from it is reported by the drift checker as never
+having run anywhere, and silence means not-yet-trusted rather than fine. The bar
+is narrow: a file is proven when its own tests ran green inside a real project's
+suite. Copying it in is not proof and neither is reading it. Record one with
+`node ~/.claude/bin/record-safety-net-proof.mjs <file> <project> "<what ran>"`.
+
+This exists because suite-lock.mjs shipped from here with a deadlock on 3
+September 2026. Its own tests were green; they only covered cases its author had
+thought of, and the case that broke it was already sitting in the project it was
+written for. The drift checker could say a file was missing. Nothing could say
+it had never been run.
+
+`suite-lock.mjs` keeps two suite runs off one database at the same time. It is
+**not a hook**: it is a vitest `globalSetup`, wired in the project's own
+`vitest.config.ts` and needed only where the tests share a single database.
+
+```ts
+globalSetup: ["./.claude/hooks/suite-lock.mjs"]
+```
+
+Why a globalSetup rather than a lock inside the stop hook, which is the obvious
+place and the wrong one: a lock only works if every party takes it, and the two
+parties that collided were the hook's run and an agent's own typed `npm test`.
+A lock in the hook covers one of them, leaving the case that actually happened.
+vitest reads its config at the start of every invocation, so a lock here covers
+both. Two consequences fall out of that: it protects a session that is already
+running, because nothing waits for a restart the way a hook does, and adopting
+it adds a file rather than editing one, so neither hook drifts.
+
+A run that takes the lock marks its process tree with an environment
+variable, so a nested `vitest` spawned by the suite skips acquiring rather
+than waiting for its own parent. That is not a nicety: the first version
+lacked it and deadlocked interplanetary-groups' suite on contact, because one
+test there spawns `vitest related` for real. The marker holds the lock path,
+so a nested run against a different project still locks that one.
+
+It waits for an in-flight run rather than skipping and trusting it. Trusting is
+cheaper and quietly weakens the gate, since the other run may have started
+before the last edit. On timeout it throws with a message naming the wait, so
+the failure can never be mistaken for a test result.
+
+`checks/suite-lock-atomicity.mjs` is a hand-run check, deliberately outside the
+runner and in a subdirectory so the drift checker does not ask projects to adopt
+it. It proves with two real processes that a heartbeat never leaves the lock file
+unreadable, which no single-process test can observe. Run it after changing how
+the beat writes:
+
+```bash
+node checks/suite-lock-atomicity.mjs
+```
+
+A project with no shared database does not need this and should record that as
+a deliberate difference rather than adopting it.
+
 **Why the split exists, since a slower gate looks safer from outside.** Running
 the whole suite after every edit cost 85 seconds per edit and about 5.6 hours of
 a single build day in interplanetary-groups, measured across session

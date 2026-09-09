@@ -12,13 +12,14 @@
 // What it does NOT do, deliberately: it never rewrites the contents of a file.
 // Paths like `~/.claude/hooks/repo-boundary.mjs` are left exactly as written,
 // because they are true statements about where these files live on the real
-// machine, and this repo mirrors that layout so they resolve here too. The one
-// file excluded from the mirror is settings.json; see EXCLUDED below.
+// machine, and this repo mirrors that layout so they resolve here too. What it
+// leaves out instead of rewriting is whole files; see EXCLUDED below.
 //
-// No test covers this script. It was verified by hand on 31 Aug 2026: a
-// modified file and an orphaned one were both detected and repaired, and
-// --check exited nonzero while the mirror was stale. A test belongs in
-// whatever change next touches this file.
+// Tested by tools/test-sync-from-source.mjs, added 9 Sep 2026 by the change
+// that excluded access-protections.md, honoring the note this header used to
+// carry: that no test covered the script and one belonged in whatever change
+// touched it next. The harness copies this file into a scratch directory so it
+// runs the shipped script byte for byte without writing into the real repo.
 //
 // Usage:  node tools/sync-from-source.mjs [--check]
 //   --check exits nonzero if the mirror is out of date, and writes nothing.
@@ -38,9 +39,24 @@ const CHECK = process.argv.includes("--check")
 //   projects (their deploy URLs, how their secrets are held, which branches are
 //   unprotected). None of it is a credential and all of it is an operational map
 //   of repos this artifact has no business describing.
+// decisions/access-protections.md: the reasoning behind settings.json, and so
+//   it inherits settings.json's problem in a more readable form: the same map
+//   of other repositories, in prose. Note what the reason is NOT. Each hook
+//   here publishes its own limits in its own header on purpose, so no single
+//   gap is a secret. What that record adds is aggregation, every gap and every
+//   permission and every repository in one place, and excluding the
+//   configuration while publishing its rationale would have published the more
+//   useful half. A public-safe rewrite of that reasoning would be welcome
+//   here; a mirror of the live file is not, and the default has to be the
+//   safe one.
 // README.md: this repo has its own, written for a different reader.
 // .gitignore: the source's ignore rules are about backing up a home directory.
-const EXCLUDED = new Set(["settings.json", "README.md", ".gitignore"])
+const EXCLUDED = new Set([
+  "settings.json",
+  "decisions/access-protections.md",
+  "README.md",
+  ".gitignore",
+])
 
 // Directories this repo owns outright, never touched by the mirror.
 const OURS = new Set(["tools", ".git", "README.md", ".gitignore", "LICENSE"])
