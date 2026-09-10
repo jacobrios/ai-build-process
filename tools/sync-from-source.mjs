@@ -117,9 +117,21 @@ function mirroredNow() {
   return out.sort()
 }
 
-const OPEN_WITH_REASON = /^<!--\s*private\s*:\s*(.+?)\s*-->\s*$/
-const OPEN_ANY = /^<!--\s*private\b\s*:?\s*(.*?)\s*-->\s*$/
-const CLOSE = /^<!--\s*\/\s*private\s*-->\s*$/
+// Markers tolerate the ways they actually get written: indented to line up
+// with a list item (this record is nested bullets throughout), inside a
+// blockquote, or capitalised. Being strict here does not fail safe. A
+// deviation that defeats the open and the close equally leaves the pair
+// balanced, so nothing looks malformed and the passage publishes with exit 0.
+// That is the one failure this feature exists to prevent, and review found it
+// in the first version, which anchored markers flush-left and case-sensitively.
+const LEAD = /^[\s>]*/
+const OPEN_WITH_REASON = /^<!--\s*private\s*:\s*(.+?)\s*-->\s*$/i
+const OPEN_ANY = /^<!--\s*private\b\s*:?\s*(.*?)\s*-->\s*$/i
+const CLOSE = /^<!--\s*\/\s*private\s*-->\s*$/i
+
+// Anything marker-shaped at all. Used as a backstop on the finished text: a
+// deviation this parser did not understand must stop the sync, never publish.
+const MARKER_SHAPED = /<!--\s*\/?\s*private\b/i
 
 // Returns the publishable text and how many passages were dropped. Throws on
 // anything ambiguous rather than guessing, since guessing wrong publishes.
@@ -131,7 +143,8 @@ function withhold(rel, text) {
   let count = 0
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
+    const raw = lines[i]
+    const line = raw.replace(LEAD, "")
     const at = `${rel}:${i + 1}`
 
     if (OPEN_ANY.test(line)) {
@@ -156,13 +169,23 @@ function withhold(rel, text) {
       continue
     }
 
-    if (openedAt === null) out.push(line)
+    if (openedAt === null) out.push(raw)
   }
 
   if (openedAt !== null) {
     throw new Error(`Unclosed <!-- private --> at ${rel}:${openedAt}. Nothing was written.`)
   }
-  return { text: out.join("\n"), count }
+
+  const published = out.join("\n")
+  const residue = out.findIndex((l) => MARKER_SHAPED.test(l))
+  if (residue !== -1) {
+    throw new Error(
+      `${rel}:${residue + 1} still looks like a <!-- private --> marker after the pass, ` +
+        `so this parser did not understand it. Nothing was written. ` +
+        `Write the marker on its own line as "<!-- private: why -->" ... "<!-- /private -->".`,
+    )
+  }
+  return { text: published, count }
 }
 
 // Every file is transformed before anything is written, so a malformed marker

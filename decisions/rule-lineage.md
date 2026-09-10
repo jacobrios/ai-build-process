@@ -69,9 +69,11 @@ Findings were verified adversarially before they reached Jacob, with three verif
 
 Worth naming as its own lesson: the sentence was true and still wrong, because it was written for a reader who had just had the conversation. This record is mirrored publicly, so its readers never have. A note that depends on context the reader lacks is a note that misleads, and the fix is not more care at writing time but the withheld-passage marker that now exists in the mirror's sync script.
 
-**The decision.** No separate human read. Jacob declined it on 9 September: the audit already covered the ground, and the month is roughly 80% job search, so the scarce resource is his attention rather than the review itself. The black-box two-account pass stays available as a fallback but is not scheduled.
+**The decision.** No separate human read. Jacob declined it on 9 September: the audit already covered the ground, and the month is roughly 80% job search, so the scarce resource is his attention rather than the review itself.
+*(Withheld from the public mirror: the review coverage an unlaunched app does and does not have)*
 
-**What is accepted with it.** The audit was static by charter: nothing was executed, no dev server, no migrations, no benches, which the audit says plainly about itself. Every runtime-only defect is therefore invisible to all seven lanes at once. Declining the human read accepts that gap knowingly rather than by oversight.
+**What is accepted with it.** The audit states its own charter limits plainly, and declining a further read accepts those knowingly rather than by oversight.
+*(Withheld from the public mirror: the review coverage an unlaunched app does and does not have)*
 
 Nothing here amends a rule. The review rule is unchanged and the freeze holds.
 

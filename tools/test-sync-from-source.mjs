@@ -204,7 +204,11 @@ const body = (dest, rel) => readFileSync(join(dest, rel), "utf8")
   check("withholds a marked passage from the mirror", !out.includes("The private paragraph"), out)
   check("keeps the public text around it", out.includes("Public reasoning") && out.includes("More public reasoning"))
   check("leaves a visible notice in its place", out.includes("Withheld from the public mirror"), out)
-  check("  naming the reason given at the marker", out.includes("operational detail about another repo"), out)
+  check(
+    "  naming the reason inside that notice, not merely somewhere in the file",
+    out.includes("Withheld from the public mirror: operational detail about another repo"),
+    out,
+  )
   check("drops the markers themselves", !out.includes("<!-- private") && !out.includes("<!-- /private"))
   check(
     "never edits the source file itself",
@@ -226,17 +230,86 @@ const body = (dest, rel) => readFileSync(join(dest, rel), "utf8")
   rmSync(f.root, { recursive: true, force: true })
 }
 
-// --check must see a newly marked passage as a change, or marking something
-// private would not propagate until some unrelated edit forced a sync.
+// --check must compare against the WITHHELD form, not the raw source. Both
+// halves matter: a mirror still carrying the passage is stale, and a mirror
+// already carrying the notice is current. Comparing raw bytes would report
+// both as changes and neither test would mean anything.
+
+const MARKED = "# Lineage\n\nkeep\n\n<!-- private: reason -->\nthe private paragraph\n<!-- /private -->\n"
+const WITHHELD = "# Lineage\n\nkeep\n\n*(Withheld from the public mirror: reason)*\n"
 
 {
   const published = "# Lineage\n\nkeep\n\nthe private paragraph\n"
-  const marked = "# Lineage\n\nkeep\n\n<!-- private: reason -->\nthe private paragraph\n<!-- /private -->\n"
-  const f = fixture({ "decisions/rule-lineage.md": marked }, { "decisions/rule-lineage.md": published })
+  const f = fixture({ "decisions/rule-lineage.md": MARKED }, { "decisions/rule-lineage.md": published })
   const r = run(f, ["--check"])
 
-  check("--check sees a newly marked passage as a change", r.code === 1, `exit ${r.code}`)
+  check("--check sees a mirror still carrying the passage as stale", r.code === 1, `exit ${r.code}`)
   check("--check writes nothing when a passage is marked", body(f.dest, "decisions/rule-lineage.md") === published)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+{
+  const f = fixture({ "decisions/rule-lineage.md": MARKED }, { "decisions/rule-lineage.md": WITHHELD })
+  const r = run(f, ["--check"])
+
+  check("--check calls a mirror carrying the notice current", r.code === 0, `exit ${r.code}\n${r.stdout}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// --- markers as they get written by hand ------------------------------------
+//
+// The leak this guards against is a marker pair that BOTH halves of a
+// deviation defeat equally: the pair stays balanced, nothing looks malformed,
+// and the passage publishes with exit 0 and no warning. Found by review on
+// 9 September 2026, after the first version anchored markers flush-left and
+// case-sensitively. The lineage record is nested bullets throughout, so an
+// indented marker is the likely way to write one, not an exotic case.
+
+for (const [name, open, close] of [
+  ["indented to line up with a list item", "  <!-- private: reason -->", "  <!-- /private -->"],
+  ["indented with a tab", "\t<!-- private: reason -->", "\t<!-- /private -->"],
+  ["inside a blockquote", "> <!-- private: reason -->", "> <!-- /private -->"],
+  ["written in capitals", "<!-- PRIVATE: reason -->", "<!-- /PRIVATE -->"],
+  ["capitalised as a sentence", "<!-- Private: reason -->", "<!-- /Private -->"],
+]) {
+  const f = fixture({ "decisions/rule-lineage.md": `# L\n\n${open}\nSECRET\n${close}\n` })
+  run(f)
+  const out = has(f.dest, "decisions/rule-lineage.md") ? body(f.dest, "decisions/rule-lineage.md") : ""
+
+  // Asserting only "the secret did not publish" would be satisfied by the
+  // residue backstop aborting the whole sync, which is safe but is not this
+  // behaviour. Require the file to exist and carry the notice.
+  check(
+    `withholds a marker pair ${name}`,
+    out.includes("Withheld from the public mirror") && !out.includes("SECRET"),
+    out || "(nothing published: the sync aborted rather than withholding)",
+  )
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// The backstop for every deviation not handled above: if anything still looks
+// like a marker after the pass, the file is not publishable. Trailing content
+// after `-->` defeats both halves equally, so balance alone would not catch it.
+
+{
+  const f = fixture({
+    "decisions/rule-lineage.md": "# L\n\n<!-- private: reason --> x\nSECRET\n<!-- /private --> x\n",
+  })
+  const r = run(f)
+
+  check("fails loudly when marker-shaped text survives the pass", r.code !== 0, `exit ${r.code}`)
+  check("  and publishes nothing", !has(f.dest, "decisions/rule-lineage.md"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+{
+  const f = fixture({
+    "decisions/rule-lineage.md":
+      "<!-- private: one -->\na\n<!-- /private -->\n\n<!-- private: two -->\nb\n<!-- /private -->\n",
+  })
+  const r = run(f)
+
+  check("counts more than one withheld passage", r.stdout.includes("2 passages"), r.stdout)
   rmSync(f.root, { recursive: true, force: true })
 }
 
@@ -251,7 +324,11 @@ const body = (dest, rel) => readFileSync(join(dest, rel), "utf8")
 
   check("fails loudly on an unclosed marker", r.code !== 0, `exit ${r.code}`)
   check("  and does not publish the passage", !has(f.dest, "decisions/rule-lineage.md"))
-  check("  and names the file", r.stdout.includes("rule-lineage.md"), r.stdout)
+  check(
+    "  and the failure names the file and line",
+    r.code !== 0 && /rule-lineage\.md:3/.test(r.stdout),
+    r.stdout,
+  )
   rmSync(f.root, { recursive: true, force: true })
 }
 
@@ -260,6 +337,7 @@ const body = (dest, rel) => readFileSync(join(dest, rel), "utf8")
   const r = run(f)
 
   check("fails loudly on a close with no open", r.code !== 0, `exit ${r.code}`)
+  check("  and publishes nothing", !has(f.dest, "decisions/rule-lineage.md"))
   rmSync(f.root, { recursive: true, force: true })
 }
 
@@ -270,6 +348,7 @@ const body = (dest, rel) => readFileSync(join(dest, rel), "utf8")
   const r = run(f)
 
   check("fails loudly on a nested open", r.code !== 0, `exit ${r.code}`)
+  check("  and publishes nothing", !has(f.dest, "decisions/rule-lineage.md"))
   rmSync(f.root, { recursive: true, force: true })
 }
 
@@ -278,6 +357,7 @@ const body = (dest, rel) => readFileSync(join(dest, rel), "utf8")
   const r = run(f)
 
   check("fails loudly when a marker gives no reason", r.code !== 0, `exit ${r.code}`)
+  check("  and publishes nothing", !has(f.dest, "decisions/rule-lineage.md"))
   rmSync(f.root, { recursive: true, force: true })
 }
 
