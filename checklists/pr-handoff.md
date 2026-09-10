@@ -2,12 +2,11 @@
 
 Referenced from the QA-script rule in `~/.claude/CLAUDE.md`, which carries the obligation; this file carries the full procedure. Run it every time a PR is opened, unprompted. The lineage (what produced each requirement) is in `~/.claude/decisions/rule-lineage.md`.
 
-## Before the PR is opened: run the production build
+## Before the PR is opened: the production build is green
 
-- Run the project's real production build, not just the test suite, and put the result in the PR body beside the test numbers.
-- Why: the suite and the build are different instruments, and only one of them is what deploys. Vitest does not typecheck; Vercel runs `tsc` during the build. On 4 September 2026 an adopted test file carried 24 TypeScript errors, four consecutive green suites said nothing about them, and three production deploys failed in a row. Production served three-hour-old code throughout, including a fix for a live bug. Vercel emailed on every failure, so the alarm worked; what was missing was any gate before the merge.
-- Per PR, not per task. A build on every task-finish would add 20 to 30 seconds to a gate that already costs 71 seconds, to catch a failure class that is rare.
-- In a worktree, use the fallback bundler when the project's default refuses a symlinked dependency directory. In interplanetary-groups that means webpack, since Turbopack will not accept a symlinked `node_modules`.
+- Where the project has a build check on pull requests (interplanetary-groups does, since PR #132), it must be green before the handoff, and its result goes in the PR body beside the test numbers. Where there is none, run the production build by hand and record that instead. (Amended 9 September 2026; the hand-run step was added 4 September.)
+- Why: the suite and the build are different instruments, and only one of them is what deploys. Vitest does not typecheck; Vercel runs `tsc` during the build. On 4 September 2026 an adopted test file carried 24 TypeScript errors, four green suites said nothing, and three production deploys failed while production served three-hour-old code, including a fix for a live bug.
+- Hand-run in a worktree: use the fallback bundler if the default refuses a symlinked dependency directory (Turbopack does; webpack works).
 - A red build blocks the PR; it is not a line in the body. If it cannot be fixed, say so in chat rather than opening the PR quietly.
 
 ## The script

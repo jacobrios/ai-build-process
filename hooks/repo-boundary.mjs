@@ -32,8 +32,15 @@
 // HONEST LIMITS
 //   - Shell text is parsed heuristically. It catches accidents, which are the real
 //     risk. Deliberate obfuscation (variables, base64, eval) can get around it.
-//   - Output redirection (`echo x > ~/file`) is not parsed. The macOS privacy
-//     settings are the layer that does not care how a request is phrased.
+//   - Output redirection (`>`, `>>`, `tee`) IS parsed since 9 September 2026. It
+//     was an accepted gap on the theory that macOS privacy settings backstopped it;
+//     they gate Documents/Desktop/Downloads, not ~/code, so they did not. What made
+//     it urgent: sessions are now steered to prefer Bash over the Write tool for
+//     file changes, so the guarded path became the one agents avoid and the
+//     unguarded one the path they use. A worktree session wrote into the main
+//     checkout this way on 31 August 2026 and was only noticed when its cleanup
+//     `rm` tripped the guard on the way out. Heredoc bodies are skipped unless a
+//     shell receives them, so prose inside one is not mistaken for a command.
 //   - A path built from a shell variable cannot be resolved, so it is allowed
 //     rather than blocked. Blocking the unresolvable would break ordinary work.
 //   - When CLAUDE_PROJECT_DIR is absent (a hook run outside the harness), the git
@@ -226,9 +233,77 @@ function tokenize(segment) {
 // A token is unresolvable if it interpolates a variable or substitutes a command.
 const isUnresolvable = (t) => /[$`*?]/.test(t)
 
+// Paths written by `>`-style operators in one raw segment. Scanned on the text
+// rather than the tokens because the tokenizer strips quotes, and quoting matters
+// here in both directions: an operator INSIDE quotes is text (`echo "a>b"`), while
+// a quoted TARGET after a real operator is still a write (`> "/other/x.md"`), and
+// the first version of this check could not tell them apart. The operator may
+// stand alone (`> file`), lead a word (`>file`, `2>file`, `&>file`) or sit inside
+// one (`x>file`). `&1`/`&2` targets are file descriptors. Input redirection (`<`,
+// heredocs) reads and is ignored.
+function redirectionTargets(segment) {
+  const out = []
+  const n = segment.length
+  let i = 0
+  let quote = null
+  while (i < n) {
+    const c = segment[i]
+    if (c === "\\") { i += 2; continue }
+    if (quote) { if (c === quote) quote = null; i++; continue }
+    if (c === '"' || c === "'") { quote = c; i++; continue }
+    if (c !== ">") { i++; continue }
+    let j = i + 1
+    if (segment[j] === ">") j++
+    if (segment[j] === "|") j++
+    while (j < n && /\s/.test(segment[j])) j++
+    if (segment[j] === "&") { i = j + 1; continue }
+    let target = ""
+    if (segment[j] === '"' || segment[j] === "'") {
+      const q = segment[j++]
+      while (j < n && segment[j] !== q) target += segment[j++]
+      j++
+    } else {
+      while (j < n && !/\s/.test(segment[j])) target += segment[j++]
+    }
+    if (target) out.push(target)
+    i = j
+  }
+  return out
+}
+
+// A heredoc body is data, not commands, unless the command receiving it is a
+// shell: `cat > x <<EOF` writes the body, `bash <<EOF` runs it. Bodies fed to
+// anything else are dropped before scanning, since a documentation line inside
+// one that happens to read `> ~/x` is prose. The line that opens the heredoc is
+// kept, so its own redirection target is still checked. Added 9 September 2026,
+// after the redirection check blocked its own lineage entry for exactly this.
+const SHELLS = new Set(["bash", "sh", "zsh", "ksh", "dash", "eval", "source", "."])
+function dropHeredocBodies(command) {
+  const lines = command.split("\n")
+  const kept = []
+  let terminator = null
+  let keepBody = false
+  for (const line of lines) {
+    if (terminator !== null) {
+      if (line.trim() === terminator) { terminator = null; continue }
+      if (keepBody) kept.push(line)
+      continue
+    }
+    kept.push(line)
+    const m = line.match(/<<-?\s*(['"]?)(\w+)\1/)
+    if (!m) continue
+    terminator = m[2]
+    const words = tokenize(line.trim())
+    let k = 0
+    while (k < words.length && PREFIXES.has(words[k])) k++
+    keepBody = SHELLS.has(words[k])
+  }
+  return kept.join("\n")
+}
+
 function checkBashCommand(command, cwd, isAllowed, projectDir) {
   // Split on shell separators, preserving order so `cd X && git commit` is understood.
-  const segments = command.split(/(?:&&|\|\||;|\||\n)/)
+  const segments = dropHeredocBodies(command).split(/(?:&&|\|\||;|\||\n)/)
   let currentDir = cwd
 
   for (const segment of segments) {
@@ -277,6 +352,30 @@ function checkBashCommand(command, cwd, isAllowed, projectDir) {
         }
       }
       continue
+    }
+
+    // Output redirection and tee write a file just as surely as `cp` does. The
+    // operator may stand alone (`> file`) or be attached (`>file`, `2>file`,
+    // `&>file`). `&1`/`&2` targets are file descriptors and /dev/* is not a file
+    // anyone keeps; both are skipped. Variable-built targets stay allowed, as every
+    // unresolvable path in this hook does.
+    const redirected = redirectionTargets(segment)
+    for (const target of redirected) {
+      if (isUnresolvable(target)) continue
+      const full = canonical(target, currentDir)
+      if (full.startsWith("/dev/")) continue
+      if (!isAllowed(full)) {
+        return { path: full, why: "output redirection would write a file outside this project" }
+      }
+    }
+    if (cmd === "tee") {
+      for (const arg of args) {
+        if (arg.startsWith("-") || isUnresolvable(arg)) continue
+        const full = canonical(arg, currentDir)
+        if (!isAllowed(full)) {
+          return { path: full, why: "`tee` would write a file outside this project" }
+        }
+      }
     }
 
     if (DESTRUCTIVE.has(cmd)) {

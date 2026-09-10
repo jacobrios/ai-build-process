@@ -198,6 +198,41 @@ wt_check 2 "wipe the main checkout's untracked"  "\"git -C $WT_MAIN clean -fd\""
 wt_check 2 "the same chore in a DIFFERENT repo"  "\"git -C $OTHER pull --ff-only\""
 rm -rf "$WT_ROOT"
 
+
+echo
+echo "REDIRECTION (added 9 Sept 2026): cat > path, >>, tee are writes too"
+echo "  must still work"
+bash_check 0 "> /dev/null"                       '"echo x > /dev/null"'
+bash_check 0 "2>&1 is a file descriptor"         '"npm test 2>&1"'
+bash_check 0 ">&2 is a file descriptor"          '"echo err >&2"'
+bash_check 0 "> relative path in project"        '"echo x > out.txt"'
+bash_check 0 ">> relative path in project"       '"echo x >> out.txt"'
+bash_check 0 "heredoc into the project"          '"cat > notes.md <<EOF\nhello\nEOF"'
+bash_check 0 "heredoc body with -> in prose"     '"cat > notes.md <<EOF\nA -> B\nEOF"'
+bash_check 0 "heredoc body with a > quote line"  '"cat > notes.md <<EOF\n> quoted line\nEOF"'
+bash_check 0 "> a variable-built path"           '"echo x > \"$TMPDIR/x\""'
+bash_check 0 ">> into the scratchpad"            "\"echo x >> $SCRATCH/log.txt\""
+bash_check 0 "tee into the project"              '"echo x | tee out.txt"'
+bash_check 0 "tee -a into the project"           '"echo x | tee -a out.txt"'
+bash_check 0 "operator inside a quoted string"   '"echo \"see>~/notes\""'
+bash_check 0 "> a literal \$var path elsewhere"     "\"echo x > $OTHER/\$name.md\""
+bash_check 0 "heredoc body prose: > ~/x (cat)"     '"cat > notes.md <<EOF\nuse > ~/x to write\nEOF"'
+bash_check 0 "heredoc body prose: rm ~/x (python)"  '"python3 - <<PY\nrm ~/x\nPY"'
+echo "  must block"
+bash_check 2 "> into another repo"               "\"echo x > $OTHER/notes.md\""
+bash_check 2 ">> into another repo"              "\"echo x >> $OTHER/notes.md\""
+bash_check 2 "> into the home directory"         '"echo x > ~/notes.md"'
+bash_check 2 "heredoc into another repo"         "\"cat > $OTHER/x.md <<EOF\nhi\nEOF\""
+bash_check 2 "tee into another repo"             "\"echo x | tee $OTHER/x.md\""
+bash_check 2 "tee -a into another repo"          "\"echo x | tee -a $OTHER/x.md\""
+bash_check 2 "cd elsewhere then > relative"      "\"cd $OTHER && echo x > notes.md\""
+bash_check 2 "2> into another repo"              "\"echo x 2> $OTHER/err.log\""
+bash_check 2 "&> into another repo"              "\"echo x &> $OTHER/all.log\""
+bash_check 2 "attached form >path"               "\"echo x>$OTHER/attached.md\""
+bash_check 2 "quoted target in another repo"     "\"echo x > \\\"$OTHER/notes.md\\\"\""
+bash_check 2 "heredoc body run by bash: > ~/x"    '"bash <<EOF\necho x > ~/notes.md\nEOF"'
+bash_check 2 "heredoc body run by sh: rm ~/x"      '"sh <<EOF\nrm ~/x\nEOF"'
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" = 0 ] || exit 1
