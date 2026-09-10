@@ -52,10 +52,21 @@
 // A typo that published the passage it was meant to hide would be worse than
 // having no feature at all.
 //
-// The escape hatch is code context. Inside a fenced block or backticks, a
-// marker is an example and is passed through untouched, so this syntax can be
-// written about in the very record it protects. Without that, documenting the
-// feature here would abort every sync with no way around it.
+// There is no escape hatch, and that is the third review's doing. A version
+// that exempted fenced blocks and backticks, so the syntax could be documented
+// in the record it protects, leaked two ways: one unmatched fence line
+// anywhere above a marker switched withholding off for the rest of the file,
+// and a backtick hid a marker from the backstop while also hiding it from the
+// parser. Both are the same shape, context tracked across lines that an edit
+// far from the marker can put into the wrong state. So no line is exempt, and
+// the backstop is deliberately crude: a comment opener and the word "private"
+// on one line, in any arrangement other than a well-formed marker, refuses the
+// file. Anything narrower is defeated by a character placed between the two.
+//
+// The cost, accepted: a mirrored document cannot quote this syntax at all, and
+// an ordinary HTML comment that happens to mention the word refuses the sync
+// until it is reworded. Both are loud. This header is where the syntax is
+// documented, and this file is not mirrored.
 //
 // Known limit, accepted: the marker only fires where someone remembered to
 // write it. Nothing here scans unmarked prose for the kind of detail that
@@ -151,18 +162,21 @@ const CLOSE = /^<!-+\s*\/\s*private\s*-+>\s*$/i
 // than the parser, or it catches nothing the parser did not already catch.
 const MARKER_SHAPED = /<!-+\s*\/?\s*private\b/i
 
-// A fenced block, and inline code, are where someone writes ABOUT this syntax.
-// A marker there is an example, not an instruction: passed through untouched
-// and exempt from the backstop. Without that, documenting the feature in the
-// record it was built for would abort every sync, with no way around it.
-const FENCE = /^\s*(?:```|~~~)/
-const INLINE_CODE = /`[^`]*`/g
-
 // A comment spread over several lines hides the word `private` from every
 // line-by-line test here. Parsing HTML properly is not worth it, so the
 // arrangement is refused instead of guessed at.
 const COMMENT_OPEN = /<!-+/
 const COMMENT_CLOSE = /-+>/
+
+// There is deliberately no exemption for fenced blocks or backticks. The second
+// fix had one, so the syntax could be documented in the record it protects, and
+// the third review broke it twice over: one unmatched fence line anywhere above
+// a marker disabled withholding for the rest of the file, and backticks hid a
+// marker from the backstop while also hiding it from the parser, which is the
+// balanced-pair leak again. Both are the same shape: context that has to be
+// tracked can be put into the wrong state by an edit nowhere near the marker.
+// So no line is exempt. The cost is that a mirrored document cannot quote this
+// syntax; it is documented in this header instead, which is not mirrored.
 
 // Returns the publishable text and how many passages were dropped. Throws on
 // anything ambiguous rather than guessing, since guessing wrong publishes.
@@ -173,30 +187,14 @@ function withhold(rel, text) {
   let reason = null
   let count = 0
 
-  let inFence = false
-  let residueAt = null
-
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]
     const line = raw.replace(LEAD, "")
     const at = `${rel}:${i + 1}`
 
-    if (FENCE.test(raw)) {
-      inFence = !inFence
-      if (openedAt === null) out.push(raw)
-      continue
-    }
-    if (inFence) {
-      if (openedAt === null) out.push(raw)
-      continue
-    }
-
-    // Code spans are examples too, so they are invisible to every test below.
-    const bare = line.replace(INLINE_CODE, "")
-
-    const opens = COMMENT_OPEN.exec(bare)
-    if (opens && !COMMENT_CLOSE.test(bare.slice(opens.index + opens[0].length))) {
-      let body = bare.slice(opens.index)
+    const opens = COMMENT_OPEN.exec(line)
+    if (opens && !COMMENT_CLOSE.test(line.slice(opens.index + opens[0].length))) {
+      let body = line.slice(opens.index)
       for (let j = i + 1; j < lines.length; j++) {
         body += `\n${lines[j]}`
         if (COMMENT_CLOSE.test(lines[j])) break
@@ -209,8 +207,28 @@ function withhold(rel, text) {
       }
     }
 
-    if (residueAt === null && MARKER_SHAPED.test(bare) && !OPEN_ANY.test(line) && !CLOSE.test(line)) {
-      residueAt = i + 1
+    // The backstop, and the reason there is no code-context exemption: a line
+    // that looks like a marker but is not one has unknown intent, so the file
+    // is refused.
+    //
+    // The test is deliberately cruder than MARKER_SHAPED: a comment opener and
+    // the word "private" anywhere on the same line, in any arrangement other
+    // than a well-formed marker. Anything narrower is defeated by putting a
+    // character between the two, which the third review did with a backtick.
+    // The cost is that an ordinary HTML comment mentioning the word refuses the
+    // file, which is loud, rare, and fixed by rewording.
+    //
+    // It reads `raw` rather than the stripped `line` for symmetry with the
+    // parser's input, not as a safety property: LEAD only removes leading
+    // whitespace and `>`, neither of which can hide a comment opener. Swapping
+    // one for the other changes no test, which is the honest measure of it.
+    if (COMMENT_OPEN.test(raw) && /private\b/i.test(raw) && !OPEN_ANY.test(line) && !CLOSE.test(line)) {
+      throw new Error(
+        `${at} looks like a <!-- private --> marker but this parser did not understand it, ` +
+          `so its intent is unknown and nothing was written. Write it alone on its line as ` +
+          `"<!-- private: why -->" ... "<!-- /private -->". A mirrored document cannot quote ` +
+          `this syntax at all; it is documented in tools/sync-from-source.mjs, which is not mirrored.`,
+      )
     }
 
     if (OPEN_ANY.test(line)) {
@@ -242,14 +260,6 @@ function withhold(rel, text) {
     throw new Error(`Unclosed <!-- private --> at ${rel}:${openedAt}. Nothing was written.`)
   }
 
-  if (residueAt !== null) {
-    throw new Error(
-      `${rel}:${residueAt} looks like a <!-- private --> marker but this parser did not ` +
-        `understand it, so its intent is unknown. Nothing was written. Write it on its own ` +
-        `line as "<!-- private: why -->" ... "<!-- /private -->", or put it in backticks or a ` +
-        `fenced block if you meant to write about the syntax rather than use it.`,
-    )
-  }
   return { text: out.join("\n"), count }
 }
 

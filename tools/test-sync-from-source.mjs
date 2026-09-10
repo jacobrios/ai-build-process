@@ -214,7 +214,7 @@ const body = (dest, rel) => readFileSync(join(dest, rel), "utf8")
     "never edits the source file itself",
     readFileSync(join(f.source, "decisions/rule-lineage.md"), "utf8") === source,
   )
-  check("reports how many passages it withheld", r.stdout.includes("1 passage"), r.stdout)
+  check("reports how many passages it withheld", r.stdout.includes("Withheld 1 passage marked"), r.stdout)
   rmSync(f.root, { recursive: true, force: true })
 }
 
@@ -239,12 +239,14 @@ const MARKED = "# Lineage\n\nkeep\n\n<!-- private: reason -->\nthe private parag
 const WITHHELD = "# Lineage\n\nkeep\n\n*(Withheld from the public mirror: reason)*\n"
 
 {
-  const published = "# Lineage\n\nkeep\n\nthe private paragraph\n"
-  const f = fixture({ "decisions/rule-lineage.md": MARKED }, { "decisions/rule-lineage.md": published })
+  // The dest is the source's own bytes, markers and all. If withholding were
+  // reverted the two would match and --check would call it in sync, so this
+  // pins the comparison to the withheld form rather than to any byte change.
+  const f = fixture({ "decisions/rule-lineage.md": MARKED }, { "decisions/rule-lineage.md": MARKED })
   const r = run(f, ["--check"])
 
-  check("--check sees a mirror still carrying the passage as stale", r.code === 1, `exit ${r.code}`)
-  check("--check writes nothing when a passage is marked", body(f.dest, "decisions/rule-lineage.md") === published)
+  check("--check sees a mirror still carrying the passage as stale", r.code === 1, `exit ${r.code}\n${r.stdout}`)
+  check("--check writes nothing when a passage is marked", body(f.dest, "decisions/rule-lineage.md") === MARKED)
   rmSync(f.root, { recursive: true, force: true })
 }
 
@@ -334,39 +336,70 @@ for (const [name, open, close] of [
   rmSync(f.root, { recursive: true, force: true })
 }
 
-// --- writing ABOUT the markers must stay possible ---------------------------
+// --- code context is NOT an escape hatch ------------------------------------
 //
-// This record is where the author documents why each rule exists, so it will
-// eventually quote this syntax. If the residue check treated that prose as a
-// broken marker it would abort every sync, and the only escape would be never
-// mentioning the feature in the document the feature was built for. Code
-// context is the escape hatch: inside a fence or backticks, a marker is an
-// example, not an instruction.
+// The second fix exempted fenced blocks and backticks so the syntax could be
+// written about in the record it protects. The third review broke that two
+// ways: one unmatched fence line anywhere above a marker disabled withholding
+// for the rest of the file, and backticks hid a marker from the backstop while
+// also hiding it from the parser, which is the balanced-pair leak again.
+//
+// Both came from one source: context that has to be tracked can be put into
+// the wrong state from a distance, by an edit nowhere near the marker. So
+// there is no code context any more. Marker-shaped text is either a marker or
+// an error, wherever it appears. The cost is that a mirrored document cannot
+// quote this syntax; the syntax is documented in the sync script's own header,
+// which lives in this repo and is not mirrored.
+
+// Both outcomes for marker-shaped text are safe, and which one you get depends
+// only on whether the pair is well formed, never on surrounding context. A
+// well-formed pair inside a fence is treated as a marker and withheld: the
+// example disappears from the mirror, which is a documentation cost, not a
+// leak. Anything not well formed refuses the whole file. Refusing the fenced
+// case instead would mean tracking fences, which is what produced two leaks.
 
 {
-  const source = [
-    "# L",
-    "",
-    "To withhold a passage, wrap it like this:",
-    "",
-    "```markdown",
-    "<!-- private: why it is withheld -->",
-    "the passage",
-    "<!-- /private -->",
-    "```",
-    "",
-    "or inline, `<!-- private: why -->` opens one.",
-    "",
-  ].join("\n")
-  const f = fixture({ "decisions/rule-lineage.md": source })
+  const f = fixture({
+    "decisions/rule-lineage.md": "# L\n\n```markdown\n<!-- private: why -->\nEXAMPLE\n<!-- /private -->\n```\n",
+  })
   const r = run(f)
+  const out = has(f.dest, "decisions/rule-lineage.md") ? body(f.dest, "decisions/rule-lineage.md") : ""
 
-  check("publishes a fenced example of the syntax untouched", r.code === 0, `exit ${r.code}\n${r.stdout}`)
-  check(
-    "  leaving the example exactly as written",
-    has(f.dest, "decisions/rule-lineage.md") && body(f.dest, "decisions/rule-lineage.md") === source,
-    has(f.dest, "decisions/rule-lineage.md") ? body(f.dest, "decisions/rule-lineage.md") : "(not published)",
-  )
+  check("treats a well-formed pair inside a fence as a marker, not an example", r.code === 0, `exit ${r.code}`)
+  check("  withholding it rather than publishing it", !out.includes("EXAMPLE"), out)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+for (const [name, open, close] of [
+  ["wrapping the whole marker", "`<!-- private: reason -->`", "`<!-- /private -->`"],
+  ["splitting it mid-marker", "the opener `<!--` private: reason -->", "the closer `<!--` /private -->"],
+  ["around the word alone", "<!-- `private`: reason -->", "<!-- `/private` -->"],
+]) {
+  const f = fixture({ "decisions/rule-lineage.md": `# L\n\n${open}\nSECRET\n${close}\n` })
+  const r = run(f)
+  const out = has(f.dest, "decisions/rule-lineage.md") ? body(f.dest, "decisions/rule-lineage.md") : ""
+
+  check(`backticks ${name} cannot publish the passage`, !out.includes("SECRET"), out)
+  check("  the file is refused rather than published", r.code !== 0, `exit ${r.code}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// The finding that mattered most: the deviation was nowhere near the marker.
+// An unclosed fence earlier in the document put the parser into a state where
+// a correctly written marker pair published verbatim, exit 0, no notice.
+
+for (const [name, preamble] of [
+  ["an unmatched fence above a marker", "```js\nnever closed\n"],
+  ["a prose line that merely starts with backticks", "```-fenced blocks were the old escape hatch.\n"],
+  ["a lone tilde fence", "~~~\nnever closed\n"],
+]) {
+  const f = fixture({
+    "decisions/rule-lineage.md": `# L\n\n${preamble}\n<!-- private: reason -->\nSECRET\n<!-- /private -->\n`,
+  })
+  run(f)
+  const out = has(f.dest, "decisions/rule-lineage.md") ? body(f.dest, "decisions/rule-lineage.md") : ""
+
+  check(`${name} cannot publish the passage`, !out.includes("SECRET"), out)
   rmSync(f.root, { recursive: true, force: true })
 }
 
