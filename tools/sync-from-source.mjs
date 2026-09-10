@@ -200,6 +200,7 @@ function withhold(rel, text) {
   const out = []
   let openedAt = null
   let reason = null
+  let indent = ""
   let count = 0
 
   for (let i = 0; i < lines.length; i++) {
@@ -249,6 +250,7 @@ function withhold(rel, text) {
     }
 
     if (OPEN_ANY.test(line)) {
+      indent = raw.slice(0, raw.length - line.length)
       if (openedAt !== null) {
         throw new Error(`Nested <!-- private --> at ${at}; the one at ${rel}:${openedAt} is still open.`)
       }
@@ -270,7 +272,10 @@ function withhold(rel, text) {
 
     if (CLOSE.test(line)) {
       if (openedAt === null) throw new Error(`<!-- /private --> at ${at} closes nothing.`)
-      out.push(`*(Withheld from the public mirror: ${reason})*`)
+      // The notice inherits the marker's own indentation. Flush-left inside an
+      // indented bullet it would end the list item and split one entry into
+      // three blocks on the rendered page, which is what a stranger reads.
+      out.push(`${indent}*(Withheld from the public mirror: ${reason})*`)
       openedAt = null
       reason = null
       count++

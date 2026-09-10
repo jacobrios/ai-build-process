@@ -424,6 +424,26 @@ for (const [name, preamble] of [
   rmSync(f.root, { recursive: true, force: true })
 }
 
+// The notice takes the marker's own indentation. Without that it lands
+// flush-left inside an indented bullet, which ends the list item and splits
+// the entry across three blocks on the rendered page. Cosmetic, but the
+// rendered page is the thing a stranger actually reads.
+
+{
+  const f = fixture({
+    "decisions/rule-lineage.md": "- a bullet\n  <!-- private: reason -->\n  withheld\n  <!-- /private -->\n  and more\n",
+  })
+  run(f)
+  const out = body(f.dest, "decisions/rule-lineage.md")
+
+  check(
+    "indents the notice to match the marker it replaces",
+    out.includes("\n  *(Withheld from the public mirror: reason)*\n"),
+    JSON.stringify(out),
+  )
+  rmSync(f.root, { recursive: true, force: true })
+}
+
 // --- a mistyped marker must not publish invisibly ---------------------------
 //
 // The fourth review's central finding. A marker whose WORD is wrong

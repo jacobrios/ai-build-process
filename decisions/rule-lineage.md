@@ -22,7 +22,9 @@ What is currently in flight, for a session with no memory of how it got here. Ev
 - **`branch-cut-guard` covers branch creation only.** A session already on a branch in a shared checkout can still stage a file another session is editing, which is how the 1 September incident swept lines that were not its own. Closing it means moving the dirty-tree check to `git add` or `git commit`, which risks blocking a session's own legitimate work in progress. Left open deliberately; revisit if it bites again.
 - ~~**The access-protections work has no decision record.** Several commits have changed `settings.json` and its autoMode blocks with commit messages as the only reasoning, which is the one area of this repo operating without the running record the rules require, and the area where a wrong call is least visible. Its own file under `decisions/` is the fix.~~ Closed 1 September 2026: `decisions/access-protections.md` written, reconstructed from git history. It carries its own Open threads section, which is now where permission questions in flight live.
 - ~~**The Concise output style is a one-week trial**, started 25 August.~~ Closed 1 September 2026: kept. Jacob's verdict was that it is working.
-- **Superpowers is a single point of failure, accepted.** Added 9 September 2026, from an outside review. The execution rules name its skills by name; if the plugin drifts or dies, they lose their engine and the plugin-free fallback (paste-able prompt handoff) is what remains. Owning a pipeline instead is the wrong project for a month of 80% job search. Revisit only if the plugin actually breaks.
+- **Superpowers is a single point of failure, accepted.** Added 9 September 2026, from an outside review. The execution rules name its skills by name; if the plugin drifts or dies, they lose their engine and the plugin-free fallback (paste-able prompt handoff) is what remains. Owning a pipeline instead is the wrong project for this month.
+  *(Withheld from the public mirror: operational detail about another repository)*
+  Revisit only if the plugin actually breaks.
 - ~~**Auto-memory stays on, swept once.** Added 9 September 2026.~~ Closed 9 September 2026, same day: b1-coach 7 to 5, interplanetary-groups 30 to 18 (12 deleted with Jacob's confirmation, one trimmed, three survivors repaired, index rewritten). Memory stays on. The memory directory is gitignored, so none of it is in this backup. Claude Code had written 31 model-authored notes for interplanetary-groups, 7 for b1-coach, and 3 more, loaded every session and never reviewed by Jacob; at least one (start the dev server for QA, 3 August) contradicts a later amendment. Decision: keep memory on, run one consolidation pass in a session in each project deleting any note that restates or contradicts CLAUDE.md, then decide on or off from what survives. Closes when the sweeps have run.
 - **A pre-write secrets scan is queued, not built.** Added 9 September 2026. Nothing scans an Edit or Write for credentials before it lands; the read guard already fences the usual source (`.env` and similar), and no incident argues for it. Build it after the rule freeze if it still seems worth it.
 - ~~**`repo-boundary.mjs` does not see shell redirection.** Added 9 September 2026, resurfaced by the IPG memory sweep.~~ Closed 9 September 2026, same evening: `>`, `>>`, `2>`, `&>`, and `tee` are checked; see the entry below. `cat > path`, `>>`, and `tee` can write outside the project without the guard firing. It was parked in IPG's memory (`redirection-gap-queued`, which holds the fix shape and the must-not-break cases) with the trigger "before the next time two sessions work the same repo at once"; that has fired repeatedly since, including today. Overdue rather than queued. A mechanism, so exempt from the rule freeze; waiting on Jacob's go.
@@ -54,9 +56,9 @@ Two outside reviews of the public mirror, one by Opus 5 and one by Fable 5.1, co
 Registered in `settings.json` by text insertion, not a JSON round trip, since that file is shared with the access-protections session. Hooks load at session start, so the live fire is unverified until the next session opens a PR; the harness-side registration is verified only by the file parsing.
 
 Also decided from the same reviews, recorded so they are not re-litigated:
-*(Withheld from the public mirror: a branch-protection detail about the author's other repositories)*
+*(Withheld from the public mirror: operational detail about another repository)*
 CI in interplanetary-groups belongs to a session there;
-*(Withheld from the public mirror: the security-review status of an unlaunched app; corrected and superseded by the entry below)*
+*(Withheld from the public mirror: operational detail about another repository, corrected and superseded by the entry below)*
 Rule additions are frozen for a month except where a mechanism replaces prose, which shrinks the file.
 
 ## The human security read, corrected and declined (9 September 2026)
@@ -64,16 +66,16 @@ Rule additions are frozen for a month except where a mechanism replaces prose, w
 Two things about the last paragraph above, decided the same evening it was written. A decision not to do something is exactly the kind that comes back later as a mystery, so it is recorded rather than left in a chat.
 
 **The correction.** That paragraph reads, taken alone, as though the sign-in and data-access code had never been reviewed. It had. The 22 August 2026 pre-launch whole-codebase audit ran seven parallel lanes over interplanetary-groups from a recorded commit, and one of them was this exact ground: whether anyone can see or do what they should not.
-*(Withheld from the public mirror: the attack surface of an unlaunched app, enumerated)*
+*(Withheld from the public mirror: operational detail about another repository)*
 Findings were verified adversarially before they reached Jacob, with three verifiers for anything rated fix-now, and the pass carries its own file-coverage ledger naming what nobody opened. What the paragraph above was actually about was a *human* second opinion on top of that, which is a much narrower thing than the sentence sounded.
 
 Worth naming as its own lesson: the sentence was true and still wrong, because it was written for a reader who had just had the conversation. This record is mirrored publicly, so its readers never have. A note that depends on context the reader lacks is a note that misleads, and the fix is not more care at writing time but the withheld-passage marker that now exists in the mirror's sync script.
 
-**The decision.** No separate human read. Jacob declined it on 9 September: the audit already covered the ground, and the month is roughly 80% job search, so the scarce resource is his attention rather than the review itself.
-*(Withheld from the public mirror: the review coverage an unlaunched app does and does not have)*
+**The decision.** No separate human read. Jacob declined it on 9 September: the audit already covered the ground, and his attention was the scarce resource rather than the review itself.
+*(Withheld from the public mirror: operational detail about another repository)*
 
 **What is accepted with it.** The audit states its own charter limits plainly, and declining a further read accepts those knowingly rather than by oversight.
-*(Withheld from the public mirror: the review coverage an unlaunched app does and does not have)*
+*(Withheld from the public mirror: operational detail about another repository)*
 
 Nothing here amends a rule. The review rule is unchanged and the freeze holds.
 
