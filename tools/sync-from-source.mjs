@@ -58,15 +58,30 @@
 // anywhere above a marker switched withholding off for the rest of the file,
 // and a backtick hid a marker from the backstop while also hiding it from the
 // parser. Both are the same shape, context tracked across lines that an edit
-// far from the marker can put into the wrong state. So no line is exempt, and
-// the backstop is deliberately crude: a comment opener and the word "private"
-// on one line, in any arrangement other than a well-formed marker, refuses the
-// file. Anything narrower is defeated by a character placed between the two.
+// far from the marker can put into the wrong state. So no line is exempt.
 //
-// The cost, accepted: a mirrored document cannot quote this syntax at all, and
-// an ordinary HTML comment that happens to mention the word refuses the sync
-// until it is reworded. Both are loud. This header is where the syntax is
-// documented, and this file is not mirrored.
+// THE BACKSTOP: in a mirrored markdown file, an HTML comment is a well-formed
+// marker or it is an error. It is not keyed on the word "private", and that is
+// the fourth review's doing. Every narrower version was defeated by mistyping
+// the thing it keyed on, and since a hand mistypes the open and the close the
+// same way, the pair stayed balanced and the passage published at exit 0.
+// `<!-- privacy: … -->` was the case that settled it: a synonym slip, and
+// because the line is still a valid comment a renderer HIDES it, so the
+// passage read as ordinary published prose with nothing signalling the
+// failure. No detector keyed on a word can catch a different word.
+//
+// The cost, accepted: a mirrored document cannot quote this syntax, and cannot
+// carry an HTML comment at all. Both are loud, and no mirrored file contains a
+// comment today. This header is where the syntax is documented, and this file
+// is not mirrored.
+//
+// WHAT THIS STILL CANNOT DO. A marker whose opener is mistyped into something
+// that is not an HTML comment (`<-- private: … -->`, or smart-dashed `<!— … —>`)
+// is invisible to all of the above and publishes the passage. It renders as
+// literal text rather than disappearing, so it is visible in the result rather
+// than silent, which is the only reason it is tolerated. The general form of
+// this limit is the one below: a marker only protects what someone remembered
+// to mark, correctly.
 //
 // Known limit, accepted: the marker only fires where someone remembered to
 // write it. Nothing here scans unmarked prose for the kind of detail that
@@ -108,12 +123,12 @@ const CHECK = process.argv.includes("--check")
 //   safe one.
 // README.md: this repo has its own, written for a different reader.
 // .gitignore: the source's ignore rules are about backing up a home directory.
-const EXCLUDED = new Set([
-  "settings.json",
-  "decisions/access-protections.md",
-  "README.md",
-  ".gitignore",
-])
+// Held lowercase and compared lowercase. macOS filesystems are case-insensitive,
+// so an exact-match list would have let a case-only rename upstream publish the
+// two files this whole script exists to withhold, silently. Found by review.
+const EXCLUDED = new Set(
+  ["settings.json", "decisions/access-protections.md", "README.md", ".gitignore"].map((f) => f.toLowerCase()),
+)
 
 // Directories this repo owns outright, never touched by the mirror.
 const OURS = new Set(["tools", ".git", "README.md", ".gitignore", "LICENSE"])
@@ -124,7 +139,7 @@ function sourceFiles() {
   }
   return execFileSync("git", ["-C", SOURCE, "ls-files"], { encoding: "utf8" })
     .split("\n")
-    .filter((f) => f && !EXCLUDED.has(f))
+    .filter((f) => f && !EXCLUDED.has(f.toLowerCase()))
     .sort()
 }
 
@@ -211,18 +226,20 @@ function withhold(rel, text) {
     // that looks like a marker but is not one has unknown intent, so the file
     // is refused.
     //
-    // The test is deliberately cruder than MARKER_SHAPED: a comment opener and
-    // the word "private" anywhere on the same line, in any arrangement other
-    // than a well-formed marker. Anything narrower is defeated by putting a
-    // character between the two, which the third review did with a backtick.
-    // The cost is that an ordinary HTML comment mentioning the word refuses the
-    // file, which is loud, rare, and fixed by rewording.
+    // The test is not keyed on the word "private" at all, and that is the
+    // fourth review's doing. A marker mistyped as `<!-- privacy: … -->` or
+    // `<!-- private_note: … -->` defeated the parser and a word-keyed backstop
+    // in one stroke, and because a hand mistypes the open and the close the
+    // same way, the pair stayed balanced. Worse, the line is still a valid HTML
+    // comment, so a renderer HIDES it: the passage read as ordinary published
+    // prose with nothing anywhere signalling the failure.
     //
-    // It reads `raw` rather than the stripped `line` for symmetry with the
-    // parser's input, not as a safety property: LEAD only removes leading
-    // whitespace and `>`, neither of which can hide a comment opener. Swapping
-    // one for the other changes no test, which is the honest measure of it.
-    if (COMMENT_OPEN.test(raw) && /private\b/i.test(raw) && !OPEN_ANY.test(line) && !CLOSE.test(line)) {
+    // No detector keyed on a word can catch a different word. So the rule is
+    // now about the comment, not the word: in a mirrored markdown file an HTML
+    // comment is a well-formed marker or it is an error. No mirrored file
+    // contains one today, so the cost is future-only, loud, and fixed by
+    // rewording.
+    if (COMMENT_OPEN.test(raw) && !OPEN_ANY.test(line) && !CLOSE.test(line)) {
       throw new Error(
         `${at} looks like a <!-- private --> marker but this parser did not understand it, ` +
           `so its intent is unknown and nothing was written. Write it alone on its line as ` +
@@ -238,6 +255,13 @@ function withhold(rel, text) {
       const withReason = line.match(OPEN_WITH_REASON)
       if (!withReason) {
         throw new Error(`<!-- private --> at ${at} gives no reason. Write "<!-- private: why -->"; the reason publishes.`)
+      }
+      if (/<!-|--!?>/.test(withReason[1])) {
+        throw new Error(
+          `The reason at ${at} contains comment syntax. It publishes verbatim inside the ` +
+            `notice, so it would close the notice and swallow the rest of the rendered page. ` +
+            `Nothing was written.`,
+        )
       }
       openedAt = i + 1
       reason = withReason[1]
@@ -270,7 +294,9 @@ const publishable = new Map()
 for (const rel of sourceFiles()) {
   const raw = readFileSync(join(SOURCE, rel))
   if (!rel.endsWith(".md")) {
-    if (MARKER_SHAPED.test(raw.toString("utf8"))) {
+    // As crude as the markdown path, and for the same reason: the narrow test
+    // let `<!-- begin private: … -->` through and published the whole file.
+    if (COMMENT_OPEN.test(raw.toString("utf8")) && /private/i.test(raw.toString("utf8"))) {
       throw new Error(`${rel} carries a <!-- private --> marker, which only means anything in markdown.`)
     }
     publishable.set(rel, raw)

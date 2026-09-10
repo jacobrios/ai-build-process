@@ -222,11 +222,28 @@ const body = (dest, rel) => readFileSync(join(dest, rel), "utf8")
 // changed the behaviour of every other file in the mirror.
 
 {
-  const original = "no markers here, just prose about <!-- and --> characters\n"
+  const original = "no markers here, just ordinary prose with arrows -> and --> in it\n"
   const f = fixture({ "CLAUDE.md": original })
   run(f)
 
-  check("leaves an unmarked file byte for byte identical", body(f.dest, "CLAUDE.md") === original)
+  check(
+    "leaves a file with no comment in it byte for byte identical",
+    has(f.dest, "CLAUDE.md") && body(f.dest, "CLAUDE.md") === original,
+  )
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// The price of refusing every HTML comment, pinned here so it is a decision
+// rather than a surprise. This fixture used to read "prose about <!-- and -->
+// characters" and it stopped being publishable when the backstop widened.
+// Today no mirrored file contains a comment at all, so nothing is lost yet.
+
+{
+  const f = fixture({ "CLAUDE.md": "prose that merely mentions an <!-- opener -->\n" })
+  const r = run(f)
+
+  check("refuses ordinary prose containing an HTML comment", r.code !== 0, `exit ${r.code}`)
+  check("  and says the line it objected to", /CLAUDE\.md:1/.test(r.stdout), r.stdout)
   rmSync(f.root, { recursive: true, force: true })
 }
 
@@ -399,7 +416,102 @@ for (const [name, preamble] of [
   run(f)
   const out = has(f.dest, "decisions/rule-lineage.md") ? body(f.dest, "decisions/rule-lineage.md") : ""
 
-  check(`${name} cannot publish the passage`, !out.includes("SECRET"), out)
+  check(
+    `${name} cannot publish the passage`,
+    out.includes("Withheld from the public mirror") && !out.includes("SECRET"),
+    out || "(nothing published)",
+  )
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// --- a mistyped marker must not publish invisibly ---------------------------
+//
+// The fourth review's central finding. A marker whose WORD is wrong
+// (`privacy`, `private_note`, `secret`) defeated the parser and the backstop
+// at once, because both were keyed on the word. The pair stayed balanced, and
+// because the line is still a valid HTML comment a renderer HIDES it, so the
+// withheld paragraph reads as ordinary published prose with nothing anywhere
+// signalling it. That is the worst shape this feature can fail in.
+//
+// No detector keyed on a word can catch a different word, so the rule stops
+// being about the word: an HTML comment in a mirrored markdown file is a
+// well-formed marker or it is an error. No mirrored file contains one today,
+// so the cost is future-only and loud.
+
+for (const [name, open, close] of [
+  ["a synonym", "<!-- privacy: reason -->", "<!-- /privacy -->"],
+  ["an underscore suffix", "<!-- private_note: reason -->", "<!-- /private_note -->"],
+  ["a plural", "<!-- privates: reason -->", "<!-- /privates -->"],
+  ["a different word entirely", "<!-- secret: reason -->", "<!-- /secret -->"],
+]) {
+  const f = fixture({ "decisions/rule-lineage.md": `# L\n\n${open}\nSECRET\n${close}\n` })
+  const r = run(f)
+  const out = has(f.dest, "decisions/rule-lineage.md") ? body(f.dest, "decisions/rule-lineage.md") : ""
+
+  check(`a marker mistyped as ${name} cannot publish the passage`, !out.includes("SECRET"), out)
+  check("  the file is refused rather than published", r.code !== 0, `exit ${r.code}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// An ordinary HTML comment is refused for the same reason: nothing can tell it
+// from a marker whose word was mistyped.
+
+{
+  const f = fixture({ "decisions/rule-lineage.md": "# L\n\n<!-- an ordinary note to self -->\n" })
+  const r = run(f)
+
+  check("refuses an ordinary HTML comment rather than guess it is not a marker", r.code !== 0, `exit ${r.code}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// The non-markdown refusal must be as crude as the markdown one. It was using
+// the narrow test, so a marker with anything between the opener and the word
+// published the whole file.
+
+{
+  const f = fixture({
+    "hooks/guard.mjs": "// <!-- begin private: deploy map -->\nconst SECRET = 1\n// <!-- end private -->\n",
+  })
+  const r = run(f)
+
+  check("refuses a loosely-worded marker outside markdown too", r.code !== 0, `exit ${r.code}`)
+  check("  and publishes nothing", !has(f.dest, "hooks/guard.mjs"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// --- the exclusion list is not case-sensitive -------------------------------
+//
+// `EXCLUDED.has(path)` is exact-match, and macOS filesystems are not. A
+// case-only rename upstream would have published the two files this whole
+// script exists to withhold, silently.
+
+{
+  const f = fixture({
+    "CLAUDE.md": "the rules\n",
+    "Settings.json": "{ profiles other repos }\n",
+    "decisions/Access-Protections.md": "where the fence is thin\n",
+  })
+  run(f)
+
+  check("excludes settings.json whatever its case", !has(f.dest, "Settings.json"))
+  check("excludes access-protections.md whatever its case", !has(f.dest, "decisions/Access-Protections.md"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// --- the notice cannot be broken out of -------------------------------------
+//
+// The reason publishes verbatim inside the notice. A reason carrying comment
+// syntax turned the acknowledged hole into a silent one: `-->` closed the
+// notice and the stray `<!--` swallowed the rest of the rendered document.
+
+{
+  const f = fixture({
+    "decisions/rule-lineage.md": "# L\n\n<!-- private: see the note --><!-- -->\nSECRET\n<!-- /private -->\n",
+  })
+  const r = run(f)
+
+  check("refuses a reason carrying comment syntax", r.code !== 0, `exit ${r.code}`)
+  check("  and publishes nothing", !has(f.dest, "decisions/rule-lineage.md"))
   rmSync(f.root, { recursive: true, force: true })
 }
 
