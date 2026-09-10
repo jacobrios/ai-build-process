@@ -53,7 +53,27 @@ Two outside reviews of the public mirror, one by Opus 5 and one by Fable 5.1, co
 
 Registered in `settings.json` by text insertion, not a JSON round trip, since that file is shared with the access-protections session. Hooks load at session start, so the live fire is unverified until the next session opens a PR; the harness-side registration is verified only by the file parsing.
 
-Also decided from the same reviews, recorded so they are not re-litigated: no GitHub Pro (branch protection is the only thing it would add, and the merge is already soft-denied in auto mode); CI in interplanetary-groups belongs to a session there; a human read of the sign-in and data-access code before launch was arranged informally the same day, with a black-box two-account pass by Jacob as the fallback if it does not come back. Rule additions are frozen for a month except where a mechanism replaces prose, which shrinks the file.
+Also decided from the same reviews, recorded so they are not re-litigated:
+*(Withheld from the public mirror: a branch-protection detail about the author's other repositories)*
+CI in interplanetary-groups belongs to a session there;
+*(Withheld from the public mirror: the security-review status of an unlaunched app; corrected and superseded by the entry below)*
+Rule additions are frozen for a month except where a mechanism replaces prose, which shrinks the file.
+
+## The human security read, corrected and declined (9 September 2026)
+
+Two things about the last paragraph above, decided the same evening it was written. A decision not to do something is exactly the kind that comes back later as a mystery, so it is recorded rather than left in a chat.
+
+**The correction.** That paragraph reads, taken alone, as though the sign-in and data-access code had never been reviewed. It had. The 22 August 2026 pre-launch whole-codebase audit ran seven parallel lanes over interplanetary-groups from a recorded commit, and one of them was this exact ground: whether anyone can see or do what they should not.
+*(Withheld from the public mirror: the attack surface of an unlaunched app, enumerated)*
+Findings were verified adversarially before they reached Jacob, with three verifiers for anything rated fix-now, and the pass carries its own file-coverage ledger naming what nobody opened. What the paragraph above was actually about was a *human* second opinion on top of that, which is a much narrower thing than the sentence sounded.
+
+Worth naming as its own lesson: the sentence was true and still wrong, because it was written for a reader who had just had the conversation. This record is mirrored publicly, so its readers never have. A note that depends on context the reader lacks is a note that misleads, and the fix is not more care at writing time but the withheld-passage marker that now exists in the mirror's sync script.
+
+**The decision.** No separate human read. Jacob declined it on 9 September: the audit already covered the ground, and the month is roughly 80% job search, so the scarce resource is his attention rather than the review itself. The black-box two-account pass stays available as a fallback but is not scheduled.
+
+**What is accepted with it.** The audit was static by charter: nothing was executed, no dev server, no migrations, no benches, which the audit says plainly about itself. Every runtime-only defect is therefore invisible to all seven lanes at once. Declining the human read accepts that gap knowingly rather than by oversight.
+
+Nothing here amends a rule. The review rule is unchanged and the freeze holds.
 
 ## The build is not the suite (4 September 2026)
 

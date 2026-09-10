@@ -9,11 +9,42 @@
 // than no copy at all. Regenerating makes an update one command instead of a
 // memory.
 //
-// What it does NOT do, deliberately: it never rewrites the contents of a file.
+// What it does NOT do, deliberately: it never rewrites the substance of a file.
 // Paths like `~/.claude/hooks/repo-boundary.mjs` are left exactly as written,
 // because they are true statements about where these files live on the real
-// machine, and this repo mirrors that layout so they resolve here too. What it
-// leaves out instead of rewriting is whole files; see EXCLUDED below.
+// machine, and this repo mirrors that layout so they resolve here too.
+//
+// It leaves content out at two grains. Whole files, via EXCLUDED below. And
+// marked passages, via WITHHELD MARKERS, added 9 September 2026 because the
+// file grain turned out to be too blunt: `decisions/rule-lineage.md` is the
+// most useful document in the mirror and it acquired one paragraph of
+// operational detail about other repositories, the exact thing EXCLUDED exists
+// to keep out. Excluding the file to hide the paragraph would have cost the
+// document; publishing the document would have cost the paragraph.
+//
+// WITHHELD MARKERS
+// In a markdown file, a passage between these lines is dropped:
+//
+//   <!-- private: a short, publishable reason -->
+//   ...withheld...
+//   <!-- /private -->
+//
+// Each marker sits on its own line. The published copy carries a visible
+// notice naming the reason in the passage's place, because a silent hole is
+// worse than an acknowledged one: a reader who can see that something was
+// withheld, and why, is not being misled about what this document is. The
+// reason itself publishes, so write it knowing that.
+//
+// Anything malformed stops the sync and writes nothing: an unclosed marker, a
+// close with no open, a nested open, a marker with no reason, or a marker in a
+// file that is not markdown (where it is not a comment, so honouring it would
+// be guesswork). The point of the feature is that it cannot fail quietly; a
+// typo that published the passage it was meant to hide would be worse than
+// having no feature at all.
+//
+// Known limit, accepted: the marker only fires where someone remembered to
+// write it. Nothing here scans unmarked prose for the kind of detail that
+// should have been marked. That belongs in a check of its own.
 //
 // Tested by tools/test-sync-from-source.mjs, added 9 Sep 2026 by the change
 // that excluded access-protections.md, honoring the note this header used to
@@ -86,12 +117,83 @@ function mirroredNow() {
   return out.sort()
 }
 
-const want = sourceFiles()
+const OPEN_WITH_REASON = /^<!--\s*private\s*:\s*(.+?)\s*-->\s*$/
+const OPEN_ANY = /^<!--\s*private\b\s*:?\s*(.*?)\s*-->\s*$/
+const CLOSE = /^<!--\s*\/\s*private\s*-->\s*$/
+
+// Returns the publishable text and how many passages were dropped. Throws on
+// anything ambiguous rather than guessing, since guessing wrong publishes.
+function withhold(rel, text) {
+  const lines = text.split("\n")
+  const out = []
+  let openedAt = null
+  let reason = null
+  let count = 0
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const at = `${rel}:${i + 1}`
+
+    if (OPEN_ANY.test(line)) {
+      if (openedAt !== null) {
+        throw new Error(`Nested <!-- private --> at ${at}; the one at ${rel}:${openedAt} is still open.`)
+      }
+      const withReason = line.match(OPEN_WITH_REASON)
+      if (!withReason) {
+        throw new Error(`<!-- private --> at ${at} gives no reason. Write "<!-- private: why -->"; the reason publishes.`)
+      }
+      openedAt = i + 1
+      reason = withReason[1]
+      continue
+    }
+
+    if (CLOSE.test(line)) {
+      if (openedAt === null) throw new Error(`<!-- /private --> at ${at} closes nothing.`)
+      out.push(`*(Withheld from the public mirror: ${reason})*`)
+      openedAt = null
+      reason = null
+      count++
+      continue
+    }
+
+    if (openedAt === null) out.push(line)
+  }
+
+  if (openedAt !== null) {
+    throw new Error(`Unclosed <!-- private --> at ${rel}:${openedAt}. Nothing was written.`)
+  }
+  return { text: out.join("\n"), count }
+}
+
+// Every file is transformed before anything is written, so a malformed marker
+// in the last file cannot leave the first ones already published.
+let withheldPassages = 0
+const publishable = new Map()
+for (const rel of sourceFiles()) {
+  const raw = readFileSync(join(SOURCE, rel))
+  if (!rel.endsWith(".md")) {
+    if (/<!--\s*\/?\s*private\b/.test(raw.toString("utf8"))) {
+      throw new Error(`${rel} carries a <!-- private --> marker, which only means anything in markdown.`)
+    }
+    publishable.set(rel, raw)
+    continue
+  }
+  const { text, count } = withhold(rel, raw.toString("utf8"))
+  withheldPassages += count
+  publishable.set(rel, count ? Buffer.from(text, "utf8") : raw)
+}
+
+const want = [...publishable.keys()]
 const have = mirroredNow()
+
+if (withheldPassages) {
+  const s = withheldPassages === 1 ? "passage" : "passages"
+  console.log(`Withheld ${withheldPassages} ${s} marked private in the source.\n`)
+}
 
 const changed = []
 for (const rel of want) {
-  const src = readFileSync(join(SOURCE, rel))
+  const src = publishable.get(rel)
   const dst = join(DEST, rel)
   const current = existsSync(dst) ? readFileSync(dst) : null
   if (current === null || !current.equals(src)) {

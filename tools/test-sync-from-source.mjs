@@ -177,6 +177,122 @@ const body = (dest, rel) => readFileSync(join(dest, rel), "utf8")
   rmSync(f.root, { recursive: true, force: true })
 }
 
+// --- withheld passages ------------------------------------------------------
+//
+// The exclusion list drops whole files, which is too blunt for a document that
+// is mostly publishable and carries one private paragraph. A marked passage is
+// dropped from the mirrored copy and replaced by a visible notice, so a reader
+// sees that something was withheld and why, rather than a silent hole.
+
+{
+  const source = [
+    "# Lineage",
+    "",
+    "Public reasoning that belongs in the mirror.",
+    "",
+    "<!-- private: operational detail about another repo -->",
+    "The private paragraph, which must never reach the public mirror.",
+    "<!-- /private -->",
+    "",
+    "More public reasoning.",
+    "",
+  ].join("\n")
+  const f = fixture({ "decisions/rule-lineage.md": source })
+  const r = run(f)
+  const out = body(f.dest, "decisions/rule-lineage.md")
+
+  check("withholds a marked passage from the mirror", !out.includes("The private paragraph"), out)
+  check("keeps the public text around it", out.includes("Public reasoning") && out.includes("More public reasoning"))
+  check("leaves a visible notice in its place", out.includes("Withheld from the public mirror"), out)
+  check("  naming the reason given at the marker", out.includes("operational detail about another repo"), out)
+  check("drops the markers themselves", !out.includes("<!-- private") && !out.includes("<!-- /private"))
+  check(
+    "never edits the source file itself",
+    readFileSync(join(f.source, "decisions/rule-lineage.md"), "utf8") === source,
+  )
+  check("reports how many passages it withheld", r.stdout.includes("1 passage"), r.stdout)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// A file with no markers must still be copied byte for byte, or the feature has
+// changed the behaviour of every other file in the mirror.
+
+{
+  const original = "no markers here, just prose about <!-- and --> characters\n"
+  const f = fixture({ "CLAUDE.md": original })
+  run(f)
+
+  check("leaves an unmarked file byte for byte identical", body(f.dest, "CLAUDE.md") === original)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// --check must see a newly marked passage as a change, or marking something
+// private would not propagate until some unrelated edit forced a sync.
+
+{
+  const published = "# Lineage\n\nkeep\n\nthe private paragraph\n"
+  const marked = "# Lineage\n\nkeep\n\n<!-- private: reason -->\nthe private paragraph\n<!-- /private -->\n"
+  const f = fixture({ "decisions/rule-lineage.md": marked }, { "decisions/rule-lineage.md": published })
+  const r = run(f, ["--check"])
+
+  check("--check sees a newly marked passage as a change", r.code === 1, `exit ${r.code}`)
+  check("--check writes nothing when a passage is marked", body(f.dest, "decisions/rule-lineage.md") === published)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// --- a broken marker fails loudly ------------------------------------------
+//
+// The whole value of this feature is that it cannot fail quietly. A typo in a
+// marker must stop the sync, never publish the passage it was meant to hide.
+
+{
+  const f = fixture({ "decisions/rule-lineage.md": "# L\n\n<!-- private: reason -->\nsecret\n" })
+  const r = run(f)
+
+  check("fails loudly on an unclosed marker", r.code !== 0, `exit ${r.code}`)
+  check("  and does not publish the passage", !has(f.dest, "decisions/rule-lineage.md"))
+  check("  and names the file", r.stdout.includes("rule-lineage.md"), r.stdout)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+{
+  const f = fixture({ "decisions/rule-lineage.md": "# L\n\nsecret\n<!-- /private -->\n" })
+  const r = run(f)
+
+  check("fails loudly on a close with no open", r.code !== 0, `exit ${r.code}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+{
+  const f = fixture({
+    "decisions/rule-lineage.md": "<!-- private: a -->\nx\n<!-- private: b -->\ny\n<!-- /private -->\n",
+  })
+  const r = run(f)
+
+  check("fails loudly on a nested open", r.code !== 0, `exit ${r.code}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+{
+  const f = fixture({ "decisions/rule-lineage.md": "<!-- private -->\nx\n<!-- /private -->\n" })
+  const r = run(f)
+
+  check("fails loudly when a marker gives no reason", r.code !== 0, `exit ${r.code}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// A marker only means anything in markdown. In any other file it is not a
+// comment, so honouring it would be guesswork; refuse rather than guess.
+
+{
+  const f = fixture({ "hooks/guard.mjs": "// <!-- private: reason -->\nconst x = 1\n// <!-- /private -->\n" })
+  const r = run(f)
+
+  check("fails loudly on a marker outside a markdown file", r.code !== 0, `exit ${r.code}`)
+  check("  and does not publish it", !has(f.dest, "hooks/guard.mjs"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
 // --- it refuses to guess ---------------------------------------------------
 
 {
