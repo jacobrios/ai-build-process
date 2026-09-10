@@ -287,6 +287,89 @@ for (const [name, open, close] of [
   rmSync(f.root, { recursive: true, force: true })
 }
 
+// An HTML comment may legally open with more than two dashes, and `<!---` is a
+// spelling a hand would produce. It defeated both halves of the pair equally in
+// the first fix, which is the leak condition, so it is honoured rather than
+// merely caught. Found by the second review, 9 September 2026.
+
+for (const [name, open, close] of [
+  ["with three dashes", "<!--- private: reason --->", "<!--- /private --->"],
+  ["with four dashes", "<!---- private: reason ---->", "<!---- /private ---->"],
+  ["with an extra dash on the open only", "<!--- private: reason -->", "<!-- /private -->"],
+]) {
+  const f = fixture({ "decisions/rule-lineage.md": `# L\n\n${open}\nSECRET\n${close}\n` })
+  run(f)
+  const out = has(f.dest, "decisions/rule-lineage.md") ? body(f.dest, "decisions/rule-lineage.md") : ""
+
+  check(
+    `withholds a marker pair ${name}`,
+    out.includes("Withheld from the public mirror") && !out.includes("SECRET"),
+    out || "(nothing published: the sync aborted rather than withholding)",
+  )
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// A comment spread over three lines hides the word `private` from any
+// line-by-line check. It cannot be honoured without parsing HTML comments
+// properly, so it is refused instead.
+
+{
+  const f = fixture({ "decisions/rule-lineage.md": "# L\n\n<!--\nprivate: reason\n-->\nSECRET\n<!--\n/private\n-->\n" })
+  const r = run(f)
+
+  check("fails loudly on a marker split across lines", r.code !== 0, `exit ${r.code}`)
+  check("  and publishes nothing", !has(f.dest, "decisions/rule-lineage.md"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// The non-markdown refusal must use the same tolerant test as everything else.
+// A capitalised marker in a hook file was slipping through it.
+
+{
+  const f = fixture({ "hooks/guard.mjs": "// <!-- PRIVATE: reason -->\nconst x = 1\n// <!-- /PRIVATE -->\n" })
+  const r = run(f)
+
+  check("fails loudly on a capitalised marker outside markdown", r.code !== 0, `exit ${r.code}`)
+  check("  and publishes nothing", !has(f.dest, "hooks/guard.mjs"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// --- writing ABOUT the markers must stay possible ---------------------------
+//
+// This record is where the author documents why each rule exists, so it will
+// eventually quote this syntax. If the residue check treated that prose as a
+// broken marker it would abort every sync, and the only escape would be never
+// mentioning the feature in the document the feature was built for. Code
+// context is the escape hatch: inside a fence or backticks, a marker is an
+// example, not an instruction.
+
+{
+  const source = [
+    "# L",
+    "",
+    "To withhold a passage, wrap it like this:",
+    "",
+    "```markdown",
+    "<!-- private: why it is withheld -->",
+    "the passage",
+    "<!-- /private -->",
+    "```",
+    "",
+    "or inline, `<!-- private: why -->` opens one.",
+    "",
+  ].join("\n")
+  const f = fixture({ "decisions/rule-lineage.md": source })
+  const r = run(f)
+
+  check("publishes a fenced example of the syntax untouched", r.code === 0, `exit ${r.code}\n${r.stdout}`)
+  check(
+    "  leaving the example exactly as written",
+    has(f.dest, "decisions/rule-lineage.md") && body(f.dest, "decisions/rule-lineage.md") === source,
+    has(f.dest, "decisions/rule-lineage.md") ? body(f.dest, "decisions/rule-lineage.md") : "(not published)",
+  )
+  rmSync(f.root, { recursive: true, force: true })
+}
+
 // The backstop for every deviation not handled above: if anything still looks
 // like a marker after the pass, the file is not publishable. Trailing content
 // after `-->` defeats both halves equally, so balance alone would not catch it.

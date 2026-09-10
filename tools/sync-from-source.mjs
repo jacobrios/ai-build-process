@@ -35,12 +35,27 @@
 // withheld, and why, is not being misled about what this document is. The
 // reason itself publishes, so write it knowing that.
 //
-// Anything malformed stops the sync and writes nothing: an unclosed marker, a
-// close with no open, a nested open, a marker with no reason, or a marker in a
-// file that is not markdown (where it is not a comment, so honouring it would
-// be guesswork). The point of the feature is that it cannot fail quietly; a
-// typo that published the passage it was meant to hide would be worse than
+// Markers are read tolerantly: indented, inside a blockquote, capitalised, or
+// opened with extra dashes all count. That is a safety property, not a
+// convenience. Strictness only fails safe when a deviation breaks ONE half of
+// the pair, leaving it unbalanced and detectable; a deviation that defeats the
+// open and the close equally leaves the pair balanced, and a strict parser then
+// publishes the passage with exit 0 and no warning. Both reviews of this
+// feature found exactly that, which is why the rule is now: understand it, or
+// refuse the file.
+//
+// Refusing means the sync stops and writes nothing, for any file. That covers
+// an unclosed marker, a close with no open, a nested open, a marker with no
+// reason, a comment spanning several lines that mentions "private" (which hides
+// the word from every line-by-line test here), a marker in a file that is not
+// markdown, and the backstop: any line left over that still looks marker-shaped.
+// A typo that published the passage it was meant to hide would be worse than
 // having no feature at all.
+//
+// The escape hatch is code context. Inside a fenced block or backticks, a
+// marker is an example and is passed through untouched, so this syntax can be
+// written about in the very record it protects. Without that, documenting the
+// feature here would abort every sync with no way around it.
 //
 // Known limit, accepted: the marker only fires where someone remembered to
 // write it. Nothing here scans unmarked prose for the kind of detail that
@@ -124,14 +139,30 @@ function mirroredNow() {
 // balanced, so nothing looks malformed and the passage publishes with exit 0.
 // That is the one failure this feature exists to prevent, and review found it
 // in the first version, which anchored markers flush-left and case-sensitively.
+// An HTML comment may open with any number of dashes, and `<!---` is a
+// spelling a hand produces, so `<!-+` throughout rather than a literal `<!--`.
 const LEAD = /^[\s>]*/
-const OPEN_WITH_REASON = /^<!--\s*private\s*:\s*(.+?)\s*-->\s*$/i
-const OPEN_ANY = /^<!--\s*private\b\s*:?\s*(.*?)\s*-->\s*$/i
-const CLOSE = /^<!--\s*\/\s*private\s*-->\s*$/i
+const OPEN_WITH_REASON = /^<!-+\s*private\s*:\s*(.+?)\s*-+>\s*$/i
+const OPEN_ANY = /^<!-+\s*private\b\s*:?\s*(.*?)\s*-+>\s*$/i
+const CLOSE = /^<!-+\s*\/\s*private\s*-+>\s*$/i
 
-// Anything marker-shaped at all. Used as a backstop on the finished text: a
-// deviation this parser did not understand must stop the sync, never publish.
-const MARKER_SHAPED = /<!--\s*\/?\s*private\b/i
+// Anything marker-shaped at all, used as a backstop: a deviation this parser
+// did not understand must stop the sync, never publish. It has to be looser
+// than the parser, or it catches nothing the parser did not already catch.
+const MARKER_SHAPED = /<!-+\s*\/?\s*private\b/i
+
+// A fenced block, and inline code, are where someone writes ABOUT this syntax.
+// A marker there is an example, not an instruction: passed through untouched
+// and exempt from the backstop. Without that, documenting the feature in the
+// record it was built for would abort every sync, with no way around it.
+const FENCE = /^\s*(?:```|~~~)/
+const INLINE_CODE = /`[^`]*`/g
+
+// A comment spread over several lines hides the word `private` from every
+// line-by-line test here. Parsing HTML properly is not worth it, so the
+// arrangement is refused instead of guessed at.
+const COMMENT_OPEN = /<!-+/
+const COMMENT_CLOSE = /-+>/
 
 // Returns the publishable text and how many passages were dropped. Throws on
 // anything ambiguous rather than guessing, since guessing wrong publishes.
@@ -142,10 +173,45 @@ function withhold(rel, text) {
   let reason = null
   let count = 0
 
+  let inFence = false
+  let residueAt = null
+
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]
     const line = raw.replace(LEAD, "")
     const at = `${rel}:${i + 1}`
+
+    if (FENCE.test(raw)) {
+      inFence = !inFence
+      if (openedAt === null) out.push(raw)
+      continue
+    }
+    if (inFence) {
+      if (openedAt === null) out.push(raw)
+      continue
+    }
+
+    // Code spans are examples too, so they are invisible to every test below.
+    const bare = line.replace(INLINE_CODE, "")
+
+    const opens = COMMENT_OPEN.exec(bare)
+    if (opens && !COMMENT_CLOSE.test(bare.slice(opens.index + opens[0].length))) {
+      let body = bare.slice(opens.index)
+      for (let j = i + 1; j < lines.length; j++) {
+        body += `\n${lines[j]}`
+        if (COMMENT_CLOSE.test(lines[j])) break
+      }
+      if (/private\b/i.test(body)) {
+        throw new Error(
+          `${at} opens an HTML comment that spans lines and mentions "private". ` +
+            `Write the marker on one line as "<!-- private: why -->". Nothing was written.`,
+        )
+      }
+    }
+
+    if (residueAt === null && MARKER_SHAPED.test(bare) && !OPEN_ANY.test(line) && !CLOSE.test(line)) {
+      residueAt = i + 1
+    }
 
     if (OPEN_ANY.test(line)) {
       if (openedAt !== null) {
@@ -176,16 +242,15 @@ function withhold(rel, text) {
     throw new Error(`Unclosed <!-- private --> at ${rel}:${openedAt}. Nothing was written.`)
   }
 
-  const published = out.join("\n")
-  const residue = out.findIndex((l) => MARKER_SHAPED.test(l))
-  if (residue !== -1) {
+  if (residueAt !== null) {
     throw new Error(
-      `${rel}:${residue + 1} still looks like a <!-- private --> marker after the pass, ` +
-        `so this parser did not understand it. Nothing was written. ` +
-        `Write the marker on its own line as "<!-- private: why -->" ... "<!-- /private -->".`,
+      `${rel}:${residueAt} looks like a <!-- private --> marker but this parser did not ` +
+        `understand it, so its intent is unknown. Nothing was written. Write it on its own ` +
+        `line as "<!-- private: why -->" ... "<!-- /private -->", or put it in backticks or a ` +
+        `fenced block if you meant to write about the syntax rather than use it.`,
     )
   }
-  return { text: published, count }
+  return { text: out.join("\n"), count }
 }
 
 // Every file is transformed before anything is written, so a malformed marker
@@ -195,7 +260,7 @@ const publishable = new Map()
 for (const rel of sourceFiles()) {
   const raw = readFileSync(join(SOURCE, rel))
   if (!rel.endsWith(".md")) {
-    if (/<!--\s*\/?\s*private\b/.test(raw.toString("utf8"))) {
+    if (MARKER_SHAPED.test(raw.toString("utf8"))) {
       throw new Error(`${rel} carries a <!-- private --> marker, which only means anything in markdown.`)
     }
     publishable.set(rel, raw)
