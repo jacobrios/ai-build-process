@@ -27,6 +27,7 @@ run() {
 run test-repo-boundary   "Checking repo boundary guard (keeps edits inside the current project)"
 run test-sensitive-guard "Checking sensitive read guard (blocks secrets and personal folders)"
 run test-branch-cut-guard "Checking branch cut guard (a new slice starts from a current main)"
+run test-pr-review-guard "Checking PR review guard (no PR opens without a review report)"
 run test-safety-net-drift "Checking safety-net drift report"
 
 if [ "$fail" = 0 ]; then
