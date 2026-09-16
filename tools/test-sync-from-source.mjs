@@ -664,21 +664,24 @@ for (const [name, open, close] of [
 // The markers only help once someone has noticed a passage is sensitive. On
 // 9 September 2026 a sync published two sentences that should not have been
 // public, caught only because that session happened to run a reviewer. These
-// are those two sentences, verbatim. A short list of high-signal phrases is
-// run against the PUBLISHABLE text of every mirrored file; an unaccepted hit
-// stops the sync before anything is written, --check included.
+// two are paraphrases of those sentences, kept for their shape (the same
+// trigger phrases in the same kind of prose), not the originals: this file is
+// itself published, and the real text would defeat the scan it tests. A short
+// list of high-signal phrases is run against the PUBLISHABLE text of every
+// mirrored file; an unaccepted hit stops the sync before anything is written,
+// --check included.
 
 const SENTENCE_A =
-  "no GitHub Pro (branch protection is the only thing it would add, and the merge is already soft-denied in auto mode);"
+  "we decided against paying for branch protection on the side project, since nothing there merges without a person;"
 const SENTENCE_B =
-  "a human read of the sign-in and data-access code before launch was arranged informally the same day, with a black-box two-account pass by Jacob as the fallback if it does not come back."
+  "a friend agreed to read the login code before launch, with a two-browser walkthrough as the fallback if they cannot."
 const ACCEPTED = "tools/sensitive-prose-accepted.json"
 
 {
   const f = fixture({ "decisions/rule-lineage.md": `# Lineage\n\n${SENTENCE_A}\n` })
   const r = run(f)
 
-  check("fails the sync on the first sentence from the incident, unmarked", r.code !== 0, `exit ${r.code}`)
+  check("fails the sync on the shape of the first leaked sentence, unmarked", r.code !== 0, `exit ${r.code}`)
   check("  and does not publish the file", !has(f.dest, "decisions/rule-lineage.md"))
   check("  and names the file and line", /rule-lineage\.md:3/.test(r.stdout), r.stdout)
   check("  and the phrase it matched", /branch protection/i.test(r.stdout), r.stdout)
@@ -689,7 +692,7 @@ const ACCEPTED = "tools/sensitive-prose-accepted.json"
   const f = fixture({ "decisions/rule-lineage.md": `# Lineage\n\n${SENTENCE_B}\n` })
   const r = run(f)
 
-  check("fails the sync on the second sentence from the incident, unmarked", r.code !== 0, `exit ${r.code}`)
+  check("fails the sync on the shape of the second leaked sentence, unmarked", r.code !== 0, `exit ${r.code}`)
   check("  and does not publish the file", !has(f.dest, "decisions/rule-lineage.md"))
   rmSync(f.root, { recursive: true, force: true })
 }

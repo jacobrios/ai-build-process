@@ -31,13 +31,12 @@ What is currently in flight, for a session with no memory of how it got here. Ev
 
 ## The mirror learns to notice (16 September 2026)
 
-The withheld-passage markers built on 9 September only help once someone has noticed a passage is sensitive. That is not how the leak happened: two sentences about another repository reached the public mirror because nobody noticed, and an independent reviewer that nothing required happened to catch them. So `tools/sync-from-source.mjs` in the mirror repo now scans the text it is about to publish, after withholding, against a short list of phrases drawn from that incident and from the passages withheld since, and refuses to write anything on a hit. Both real sentences are test cases.
+The withheld-passage markers built on 9 September only help once someone has noticed a passage is sensitive. That is not how the leak happened: two sentences about another repository reached the public mirror because nobody noticed, and an independent reviewer that nothing required happened to catch them. So `tools/sync-from-source.mjs` in the mirror repo now scans the text it is about to publish, after withholding, against a short list of phrases drawn from that incident and from the passages withheld since, and refuses to write anything on a hit. The test cases are paraphrases of the real sentences that keep the phrases which should have caught them, since the mirror publishes its own tests and must not republish the originals.
 
 Decided, not to be relitigated: phrases only, since bare words like "secret" and repository names are the vocabulary of the hooks and would flag them every run; a hit blocks rather than warns, because a warning on a command someone runs to get something done is what gets skimmed past; acceptance is per line, in a file in the mirror repo, keyed on the exact text plus a reason, so it expires the moment the line is reworded; and the whole file is scanned every run, since anything else grandfathers what is already published. Ten lines accepted on day one, after twelve placeholder web addresses in tests and templates were exempted rather than accepted. The limit is in the script header where the next reader will find it: a phrase list catches what has recurred, is line-based, and will not catch a novel phrasing. A mitigation, not a solution.
 
 Same PR: the mirror's removal walk now honours its own `.gitignore`, after a Finder-created file made the check permanently noisy and a real run would have deleted it. Suite 85 to 122, each test shown red first. Independent review found no way to slip a hit through; its four smaller findings were fixed before merge.
 
-Also decided the same day, recorded here rather than left in chat:
 *(Withheld from the public mirror: operational detail about another repository)*
 
 ## The boundary guard learns to read redirection (9 September 2026)
