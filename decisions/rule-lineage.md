@@ -29,6 +29,17 @@ What is currently in flight, for a session with no memory of how it got here. Ev
 - **A pre-write secrets scan is queued, not built.** Added 9 September 2026. Nothing scans an Edit or Write for credentials before it lands; the read guard already fences the usual source (`.env` and similar), and no incident argues for it. Build it after the rule freeze if it still seems worth it.
 - ~~**`repo-boundary.mjs` does not see shell redirection.** Added 9 September 2026, resurfaced by the IPG memory sweep.~~ Closed 9 September 2026, same evening: `>`, `>>`, `2>`, `&>`, and `tee` are checked; see the entry below. `cat > path`, `>>`, and `tee` can write outside the project without the guard firing. It was parked in IPG's memory (`redirection-gap-queued`, which holds the fix shape and the must-not-break cases) with the trigger "before the next time two sessions work the same repo at once"; that has fired repeatedly since, including today. Overdue rather than queued. A mechanism, so exempt from the rule freeze; waiting on Jacob's go.
 
+## The mirror learns to notice (16 September 2026)
+
+The withheld-passage markers built on 9 September only help once someone has noticed a passage is sensitive. That is not how the leak happened: two sentences about another repository reached the public mirror because nobody noticed, and an independent reviewer that nothing required happened to catch them. So `tools/sync-from-source.mjs` in the mirror repo now scans the text it is about to publish, after withholding, against a short list of phrases drawn from that incident and from the passages withheld since, and refuses to write anything on a hit. Both real sentences are test cases.
+
+Decided, not to be relitigated: phrases only, since bare words like "secret" and repository names are the vocabulary of the hooks and would flag them every run; a hit blocks rather than warns, because a warning on a command someone runs to get something done is what gets skimmed past; acceptance is per line, in a file in the mirror repo, keyed on the exact text plus a reason, so it expires the moment the line is reworded; and the whole file is scanned every run, since anything else grandfathers what is already published. Ten lines accepted on day one, after twelve placeholder web addresses in tests and templates were exempted rather than accepted. The limit is in the script header where the next reader will find it: a phrase list catches what has recurred, is line-based, and will not catch a novel phrasing. A mitigation, not a solution.
+
+Same PR: the mirror's removal walk now honours its own `.gitignore`, after a Finder-created file made the check permanently noisy and a real run would have deleted it. Suite 85 to 122, each test shown red first. Independent review found no way to slip a hit through; its four smaller findings were fixed before merge.
+
+Also decided the same day, recorded here rather than left in chat:
+*(Withheld from the public mirror: operational detail about another repository)*
+
 ## The boundary guard learns to read redirection (9 September 2026)
 
 `repo-boundary.mjs` now treats `> path`, `>> path`, `2> path`, `&> path` and `tee path` as the writes they are, resolved and fenced exactly as `cp` destinations already were. 27 new cases in its test file (14 must-still-work, 13 must-block), 124 total, and eight sabotages each turned tests red.
