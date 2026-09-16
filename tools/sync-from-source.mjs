@@ -155,7 +155,24 @@ function mirroredNow() {
     }
   }
   walk(DEST)
-  return out.sort()
+  const skip = ignored(out)
+  return out.filter((rel) => !skip.has(rel)).sort()
+}
+
+// The walk sees what git ignores, so a Finder-created .DS_Store made it want
+// `remove .DS_Store` and left --check noisy forever after, which ruins a gate
+// whose whole value is being quiet. So the mirror's own .gitignore is honoured,
+// asking git rather than reimplementing its rules. Exit 1 means nothing is
+// ignored, and a DEST that is not a repo (the test fixtures) ignores nothing.
+function ignored(rels) {
+  if (!existsSync(join(DEST, ".git"))) return new Set()
+  try {
+    const out = execFileSync("git", ["-C", DEST, "check-ignore", "--stdin"], { input: rels.join("\n"), encoding: "utf8" })
+    return new Set(out.split("\n").filter(Boolean))
+  } catch (e) {
+    if (e.status === 1) return new Set()
+    throw e
+  }
 }
 
 // Markers tolerate the ways they actually get written: indented to line up

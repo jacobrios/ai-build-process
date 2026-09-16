@@ -621,6 +621,26 @@ for (const [name, open, close] of [
   rmSync(f.root, { recursive: true, force: true })
 }
 
+// --- the mirror's own .gitignore is honoured --------------------------------
+//
+// mirroredNow() walks the filesystem, so it sees what git ignores. A Finder
+// visit left a .DS_Store in the real repo and --check reported it as a removal
+// forever after, which ruins a gate whose whole value is being quiet. And a
+// real sync would have deleted a local file the mirror has no business touching.
+
+{
+  const f = fixture({ "CLAUDE.md": "the rules\n" }, { "CLAUDE.md": "the rules\n" })
+  execFileSync("git", ["init", "-q"], { cwd: f.dest })
+  writeFileSync(join(f.dest, ".gitignore"), ".DS_Store\n")
+  writeFileSync(join(f.dest, ".DS_Store"), "finder was here\n")
+  const r = run(f, ["--check"])
+
+  check("ignores files the mirror's .gitignore ignores, so --check stays quiet", r.code === 0 && !r.stdout.includes(".DS_Store"), `exit ${r.code}\n${r.stdout}`)
+  run(f)
+  check("  and never deletes them", has(f.dest, ".DS_Store"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
 // --- it refuses to guess ---------------------------------------------------
 
 {
