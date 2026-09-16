@@ -641,6 +641,207 @@ for (const [name, open, close] of [
   rmSync(f.root, { recursive: true, force: true })
 }
 
+// --- unmarked sensitive prose fails the sync ---------------------------------
+//
+// The markers only help once someone has noticed a passage is sensitive. On
+// 9 September 2026 a sync published two sentences that should not have been
+// public, caught only because that session happened to run a reviewer. These
+// are those two sentences, verbatim. A short list of high-signal phrases is
+// run against the PUBLISHABLE text of every mirrored file; an unaccepted hit
+// stops the sync before anything is written, --check included.
+
+const SENTENCE_A =
+  "no GitHub Pro (branch protection is the only thing it would add, and the merge is already soft-denied in auto mode);"
+const SENTENCE_B =
+  "a human read of the sign-in and data-access code before launch was arranged informally the same day, with a black-box two-account pass by Jacob as the fallback if it does not come back."
+const ACCEPTED = "tools/sensitive-prose-accepted.json"
+
+{
+  const f = fixture({ "decisions/rule-lineage.md": `# Lineage\n\n${SENTENCE_A}\n` })
+  const r = run(f)
+
+  check("fails the sync on the first sentence from the incident, unmarked", r.code !== 0, `exit ${r.code}`)
+  check("  and does not publish the file", !has(f.dest, "decisions/rule-lineage.md"))
+  check("  and names the file and line", /rule-lineage\.md:3/.test(r.stdout), r.stdout)
+  check("  and the phrase it matched", /branch protection/i.test(r.stdout), r.stdout)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+{
+  const f = fixture({ "decisions/rule-lineage.md": `# Lineage\n\n${SENTENCE_B}\n` })
+  const r = run(f)
+
+  check("fails the sync on the second sentence from the incident, unmarked", r.code !== 0, `exit ${r.code}`)
+  check("  and does not publish the file", !has(f.dest, "decisions/rule-lineage.md"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// The line named is the SOURCE line, not the line in the withheld text. The
+// lineage record has six withheld passages above most of its prose, so the
+// two would differ by a dozen lines in exactly the file that matters most.
+
+{
+  const f = fixture({
+    "decisions/rule-lineage.md": `# L\n\n<!-- private: reason -->\nhidden\nhidden too\n<!-- /private -->\n${SENTENCE_A}\n`,
+  })
+  const r = run(f)
+
+  check("names the source line, not the line in the withheld text", /rule-lineage\.md:7\b/.test(r.stdout), r.stdout)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// Marking the passage private is one of the two ways to resolve a hit. The
+// scan runs on the withheld text, so a marked passage is exempt by construction.
+
+{
+  const f = fixture({
+    "decisions/rule-lineage.md": `# Lineage\n\n<!-- private: reason -->\n${SENTENCE_A}\n${SENTENCE_B}\n<!-- /private -->\n`,
+  })
+  const r = run(f)
+  const out = has(f.dest, "decisions/rule-lineage.md") ? body(f.dest, "decisions/rule-lineage.md") : ""
+
+  check("publishes once both sentences are wrapped in a private marker", r.code === 0, `exit ${r.code}\n${r.stdout}`)
+  check("  and the published copy carries neither", out.length > 0 && !out.includes(SENTENCE_A) && !out.includes(SENTENCE_B), out)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// A hit anywhere stops everything, like a malformed marker: the clean file is
+// not written either. A half-written mirror would be a second thing to notice.
+
+{
+  const f = fixture({ "CLAUDE.md": "the rules\n", "decisions/rule-lineage.md": `# Lineage\n\n${SENTENCE_A}\n` })
+  const r = run(f)
+
+  check("a hit in one file blocks writing every file", r.code !== 0 && !has(f.dest, "CLAUDE.md"), `exit ${r.code}`)
+  check("  including the one with the hit", !has(f.dest, "decisions/rule-lineage.md"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// The dest already matches, so without the scan this would be "In sync", exit 0.
+
+{
+  const src = `# Lineage\n\n${SENTENCE_A}\n`
+  const f = fixture({ "decisions/rule-lineage.md": src }, { "decisions/rule-lineage.md": src })
+  const r = run(f, ["--check"])
+
+  check("--check exits nonzero on a hit, even when the mirror is otherwise current", r.code !== 0, `exit ${r.code}\n${r.stdout}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// The notice publishes the marker's reason, so a reason that signposts what it
+// hides is itself a leak. That was part of the 9 September incident. The scan
+// sees the emitted notice line, so such a reason blocks like any other prose.
+
+{
+  const f = fixture({
+    "decisions/rule-lineage.md": "# L\n\n<!-- private: the attack surface of an unlaunched app -->\nSECRET\n<!-- /private -->\n",
+  })
+  const r = run(f)
+
+  check("a notice reason that signposts what it hides blocks the sync", r.code !== 0, `exit ${r.code}`)
+  check("  and publishes nothing", !has(f.dest, "decisions/rule-lineage.md"))
+  check("  and names the phrase in the reason", /attack surface|unlaunched/i.test(r.stdout), r.stdout)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// A URL is the widest phrase on the list, and non-markdown files are scanned
+// the same way: a hook's comment can point at a repository as easily as prose.
+
+{
+  const f = fixture({ "CLAUDE.md": "the rules live at https://github.com/someone/private-repo\n" })
+  const r = run(f)
+
+  check("a URL in a mirrored markdown file blocks", r.code !== 0, `exit ${r.code}`)
+  check("  and publishes nothing", !has(f.dest, "CLAUDE.md"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+{
+  const f = fixture({ "hooks/guard.mjs": "// see https://real-app.vercel.app\nconst x = 1\n" })
+  const r = run(f)
+
+  check("a hit in a non-markdown file blocks", r.code !== 0, `exit ${r.code}`)
+  check("  and publishes nothing", !has(f.dest, "hooks/guard.mjs"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// Placeholder hosts in tests and templates are not addresses. Without this
+// the day-one acceptance file was half example.com and template hosts, which
+// is exactly the bloat an acceptance list should not carry.
+
+{
+  const f = fixture({
+    "templates/db-which.test.ts":
+      "see https://example.com/x\nsee https://${REF}.supabase.co\nsee https://<ref>.supabase.co\nsee http://localhost:3000\n",
+  })
+  const r = run(f)
+
+  check("placeholder and template hosts publish at exit 0", r.code === 0 && has(f.dest, "templates/db-which.test.ts"), `exit ${r.code}\n${r.stdout}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+{
+  const f = fixture({ "templates/db-which.ts": "see https://real-app.vercel.app\n" })
+  const r = run(f)
+
+  check("a real host still blocks", r.code !== 0 && !has(f.dest, "templates/db-which.ts"), `exit ${r.code}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// The other way to resolve a hit: accept the exact line, with a reason, in a
+// file this repo owns. The whole file is checked every run.
+
+{
+  const entry = [{ file: "decisions/rule-lineage.md", text: SENTENCE_A, reason: "a test fixture standing in for a real decision" }]
+  const f = fixture({ "decisions/rule-lineage.md": `# Lineage\n\n${SENTENCE_A}\n` }, { [ACCEPTED]: JSON.stringify(entry) })
+  const r = run(f)
+
+  check("an accepted line publishes", r.code === 0, `exit ${r.code}\n${r.stdout}`)
+  check("  and the file is written", has(f.dest, "decisions/rule-lineage.md") && body(f.dest, "decisions/rule-lineage.md").includes(SENTENCE_A))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// An acceptance is for one exact line. Once the line changes, or goes away, the
+// acceptance is stale and the sync says so, the same expiry as
+// ~/.claude/bin/accept-safety-net-difference.mjs: a permanent mute would hide
+// the next incident as effectively as having no scan at all.
+
+{
+  const entry = [{ file: "decisions/rule-lineage.md", text: "a line that is no longer in the source", reason: "a test fixture standing in for a real decision" }]
+  const f = fixture({ "decisions/rule-lineage.md": "# Lineage\n\nordinary prose\n" }, { [ACCEPTED]: JSON.stringify(entry) })
+  const r = run(f)
+
+  check("a stale acceptance fails the sync", r.code !== 0, `exit ${r.code}\n${r.stdout}`)
+  check("  and names the entry", r.stdout.includes("a line that is no longer in the source"), r.stdout)
+  check("  and publishes nothing", !has(f.dest, "decisions/rule-lineage.md"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+{
+  const entry = [{ file: "decisions/rule-lineage.md", text: SENTENCE_A, reason: "fine" }]
+  const f = fixture({ "decisions/rule-lineage.md": `# Lineage\n\n${SENTENCE_A}\n` }, { [ACCEPTED]: JSON.stringify(entry) })
+  const r = run(f)
+
+  check("an acceptance whose reason says nothing fails the sync", r.code !== 0, `exit ${r.code}\n${r.stdout}`)
+  check("  and publishes nothing", !has(f.dest, "decisions/rule-lineage.md"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// Ordinary prose about reviews, launches and the like is not flagged. The list
+// is phrases, not words, on purpose: bare words are the vocabulary of the guards
+// and would flag the hooks every run.
+
+{
+  const f = fixture({
+    "decisions/rule-lineage.md": `# Lineage\n\n<!-- private: reason -->\n${SENTENCE_A}\n<!-- /private -->\n\nthe review rule is unchanged\n`,
+  })
+  const r = run(f)
+
+  check("ordinary prose about reviews publishes at exit 0", r.code === 0, `exit ${r.code}\n${r.stdout}`)
+  check("  and the file is written", has(f.dest, "decisions/rule-lineage.md"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
 // --- it refuses to guess ---------------------------------------------------
 
 {

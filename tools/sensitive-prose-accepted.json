@@ -1,0 +1,47 @@
+[
+  {
+    "file": "decisions/2026-07-31-rules-consolidation.md",
+    "text": "**The asymmetry:** option 4 (discard) requires typing the word. Option 1, the one that violates the process, requires one character. The menu protects against data loss and not against process loss, which is backwards here, since a discarded branch is far easier to recover than an unreviewed merge is to undo.",
+    "reason": "Reasoning about why a local merge is dangerous in general; it names no repository and no gap in one."
+  },
+  {
+    "file": "decisions/rule-lineage.md",
+    "text": "**The correction.** That paragraph reads, taken alone, as though the sign-in and data-access code had never been reviewed. It had. The 22 August 2026 pre-launch whole-codebase audit ran seven parallel lanes over interplanetary-groups from a recorded commit, and one of them was this exact ground: whether anyone can see or do what they should not.",
+    "reason": "Says a review did happen and names no gap; kept public on 9 September 2026 on purpose, as the correction to the withheld passage that follows it."
+  },
+  {
+    "file": "decisions/rule-lineage.md",
+    "text": "A subagent in interplanetary-groups was running `npm test` as its own verification at the moment `full-suite-on-subagent-stop.mjs` fired and ran the suite too. That project has one dev-test database, so the two runs contended for connections until a Prisma transaction could not start and the suite went red naming `invite-token.test.ts`, a file nobody had touched. Run alone seconds later it was 1704 of 1704 across 146 files. Reported by two sessions independently.",
+    "reason": "A test file's name, quoted to explain a flaky suite; it is not a token and says nothing about how invites work."
+  },
+  {
+    "file": "decisions/rule-lineage.md",
+    "text": "A session ran `git checkout -b fix-1password-diagnosis` in the shared main checkout of interplanetary-groups while another session had work in flight there. The checkout had moved to that session's feature branch, so the new branch was cut from its tip and PR #112 carried 32 commits of an unmerged feature under a title about 1Password. Had it merged, the feature would have shipped unreviewed, past the gate that is not supposed to degrade. The same commit also swept in the other session's uncommitted work. Cleaned up by the session that caught it before Jacob was asked to merge.",
+    "reason": "A process story about a branch cut from the wrong tip; the word describes a merge that was prevented, not the state of any repository."
+  },
+  {
+    "file": "decisions/rule-lineage.md",
+    "text": "**Open a PR and stop, with no local-merge option (amended 31 July 2026).** Superpowers' `finishing-a-development-branch` presents a fixed four-option menu where option 1 is merge locally. The menu asks, so nothing merges without a yes, but the failure mode is a tired human typing \"1\" at the end of a long build, which responds to the option not being offered, not to better instructions. A local merge skips the PR and with it the QA script, the decision-record entry, and the PR body disclosures at once. The asymmetry that clinched it: option 4 (discard) requires typing the word, while option 1, the one that violates the process, requires one character; the menu protects against data loss and not process loss, which is backwards here, since a discarded branch is far easier to recover than an unreviewed merge is to undo. Whether the finishing skill honors a declared preference the way the worktree skill does was not verified; a stated rule is sufficient grounds to skip the option and say why.",
+    "reason": "Reasoning about the finishing menu in general; it names no repository and no gap in one."
+  },
+  {
+    "file": "hooks/branch-cut-guard.mjs",
+    "text": "// unreviewed, past the one gate that is not supposed to degrade.",
+    "reason": "The hook's own header explaining the merge gate it protects, in general terms."
+  },
+  {
+    "file": "hooks/sensitive-read-guard.mjs",
+    "text": "{ label: \"a .env file (database passwords, API keys)\", re: /(?<![\\w\\\\])\\.env(\\.[\\w-]+)?(?![\\w/])/ },",
+    "reason": "Names the category of file the guard protects, not any key."
+  },
+  {
+    "file": "hooks/sensitive-read-guard.mjs",
+    "text": "// security audit checking whether secrets had ever been committed. None of those read",
+    "reason": "Recounts a check the guard once wrongly blocked; it is about the guard's calibration, not any repository's findings."
+  },
+  {
+    "file": "templates/project-safety-nets/suite-lock.mjs",
+    "text": "// `invite-token.test.ts`, a file nobody had touched. Run alone seconds later:",
+    "reason": "A test file's name quoted in the template's header; it is not a token."
+  }
+]
