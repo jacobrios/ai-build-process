@@ -95,7 +95,8 @@
 // line with a reason in tools/sensitive-prose-accepted.json; an acceptance
 // expires the moment the line changes. The limit, stated plainly: a phrase
 // list catches the categories that have recurred and will not catch a novel
-// phrasing. It is a mitigation, not a solution.
+// phrasing, and the scan is line-based, so a phrase split across a hard line
+// wrap is not seen. It is a mitigation, not a solution.
 //
 // Tested by tools/test-sync-from-source.mjs, added 9 Sep 2026 by the change
 // that excluded access-protections.md, honoring the note this header used to
@@ -174,11 +175,13 @@ function mirroredNow() {
 // whose whole value is being quiet. So the mirror's own .gitignore is honoured,
 // asking git rather than reimplementing its rules. Exit 1 means nothing is
 // ignored, and a DEST that is not a repo (the test fixtures) ignores nothing.
+// NUL-separated both ways: git quotes a non-ASCII path in its default output,
+// so an ignored `decisions/café.log` never matched and a sync deleted it.
 function ignored(rels) {
   if (!existsSync(join(DEST, ".git"))) return new Set()
   try {
-    const out = execFileSync("git", ["-C", DEST, "check-ignore", "--stdin"], { input: rels.join("\n"), encoding: "utf8" })
-    return new Set(out.split("\n").filter(Boolean))
+    const out = execFileSync("git", ["-C", DEST, "check-ignore", "--stdin", "-z"], { input: rels.join("\0"), encoding: "utf8" })
+    return new Set(out.split("\0").filter(Boolean))
   } catch (e) {
     if (e.status === 1) return new Set()
     throw e
@@ -214,25 +217,26 @@ const COMMENT_CLOSE = /-+>/
 // "secret" or "token" is the vocabulary of the guards mirrored here and would
 // flag the hooks every run. Word boundaries where a phrase could sit inside a
 // longer innocent word; "unprotected" needs none, "token" alone never matches.
+// A phrase's words may be joined by a space, a hyphen or an underscore.
 const SENSITIVE = [
-  /\bbranch[ -]protection/i,
-  /\bprotected branch/i,
+  /\bbranch[ _-]protection/i,
+  /\bprotected[ _-]branch/i,
   /unprotected/i,
-  /\bsecurity (review|audit)/i,
-  /\b(never|not) been reviewed/i,
+  /\bsecurity[ _-](review|audit)/i,
+  /\b(never|not)[ _-]been[ _-]reviewed/i,
   /unreviewed/i,
-  /\bbefore launch\b/i,
-  /\bpre-launch/i,
+  /\bbefore[ _-]launch\b/i,
+  /\bpre[ _-]launch/i,
   /unlaunched/i,
-  /\battack surface/i,
-  /\bjob search/i,
-  /\bapi key/i,
-  /\bsecret key/i,
-  /\bcron secret/i,
-  /\binvite[ -]token\b/i,
-  /\baccess token\b/i,
+  /\battack[ _-]surface/i,
+  /\bjob[ _-]search/i,
+  /\bapi[ _-]key/i,
+  /\bsecret[ _-]key/i,
+  /\bcron[ _-]secret/i,
+  /\binvite[ _-]token\b/i,
+  /\baccess[ _-]token\b/i,
   // Any address, except placeholder hosts: those in tests and templates are not addresses.
-  /https?:\/\/(?!(www\.)?example\.(com|org|net)\b|localhost\b|127\.0\.0\.1|<|\$\{)/i,
+  /https?:\/\/(?!(www\.)?example\.(com|org|net)(?![\w.-])|localhost(?![\w.-])|127\.0\.0\.1(?![\w.-])|<|\$\{)/i,
 ]
 
 // Lines accepted as fine to publish, each with a reason. Lives under tools/,

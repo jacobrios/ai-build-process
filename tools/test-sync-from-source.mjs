@@ -641,6 +641,24 @@ for (const [name, open, close] of [
   rmSync(f.root, { recursive: true, force: true })
 }
 
+// git quotes a non-ASCII path in its default output, so an ignored
+// `decisions/café.log` never matched what the walk saw and a real sync would
+// have deleted it. NUL-separated input and output carry the name verbatim.
+
+{
+  const f = fixture({ "CLAUDE.md": "the rules\n" }, { "CLAUDE.md": "the rules\n" })
+  execFileSync("git", ["init", "-q"], { cwd: f.dest })
+  writeFileSync(join(f.dest, ".gitignore"), "*.log\n")
+  mkdirSync(join(f.dest, "decisions"), { recursive: true })
+  writeFileSync(join(f.dest, "decisions", "café.log"), "stray\n")
+  const r = run(f, ["--check"])
+
+  check("honours an ignore rule on a non-ASCII path", r.code === 0 && !r.stdout.includes("café"), `exit ${r.code}\n${r.stdout}`)
+  run(f)
+  check("  and never deletes it", has(f.dest, "decisions/café.log"))
+  rmSync(f.root, { recursive: true, force: true })
+}
+
 // --- unmarked sensitive prose fails the sync ---------------------------------
 //
 // The markers only help once someone has noticed a passage is sensitive. On
@@ -785,6 +803,36 @@ const ACCEPTED = "tools/sensitive-prose-accepted.json"
   const r = run(f)
 
   check("a real host still blocks", r.code !== 0 && !has(f.dest, "templates/db-which.ts"), `exit ${r.code}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// A phrase written with a hyphen or underscore is the same phrase. The
+// branch's own earlier commit title wrote "job-search".
+
+{
+  const f = fixture({ "CLAUDE.md": "the job-search reason\n" })
+  const r = run(f)
+
+  check("a hyphenated phrase blocks", r.code !== 0 && !has(f.dest, "CLAUDE.md"), `exit ${r.code}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+// `\b` matches on a dot, so a placeholder host used as a prefix of a real one
+// slipped through the exemption.
+
+{
+  const f = fixture({ "CLAUDE.md": "see https://example.com.internal-app.net/admin\n" })
+  const r = run(f)
+
+  check("a real host behind a placeholder prefix still blocks", r.code !== 0 && !has(f.dest, "CLAUDE.md"), `exit ${r.code}`)
+  rmSync(f.root, { recursive: true, force: true })
+}
+
+{
+  const f = fixture({ "CLAUDE.md": "see https://example.com/x\n" })
+  const r = run(f)
+
+  check("  while a placeholder host with a path still publishes", r.code === 0 && has(f.dest, "CLAUDE.md"), `exit ${r.code}\n${r.stdout}`)
   rmSync(f.root, { recursive: true, force: true })
 }
 

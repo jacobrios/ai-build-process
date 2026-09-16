@@ -43,5 +43,10 @@
     "file": "templates/project-safety-nets/suite-lock.mjs",
     "text": "// `invite-token.test.ts`, a file nobody had touched. Run alone seconds later:",
     "reason": "A test file's name quoted in the template's header; it is not a token."
+  },
+  {
+    "file": "hooks/sensitive-read-guard.mjs",
+    "text": "// \"process.env.API_KEY\", and ordinary source-code searches get blocked. Requiring",
+    "reason": "A generic example variable name showing what the guard must not block; it is not any key."
   }
 ]
