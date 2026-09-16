@@ -83,9 +83,20 @@
 // this limit is the one below: a marker only protects what someone remembered
 // to mark, correctly.
 //
-// Known limit, accepted: the marker only fires where someone remembered to
-// write it. Nothing here scans unmarked prose for the kind of detail that
-// should have been marked. That belongs in a check of its own.
+// SENSITIVE-PROSE SCAN, added 15 September 2026. The markers only help once
+// someone has noticed a passage is sensitive; the failure mode is not noticing.
+// On 9 September 2026 a sync published two sentences that should not have been
+// public, caught only because that session happened to run a reviewer that
+// nothing required. So a short list of high-signal phrases (SENSITIVE below)
+// is run against the publishable text of every mirrored file, after
+// withholding, so a marked passage is exempt and the notice line itself is
+// checked. Any unaccepted hit stops the sync before anything is written.
+// A hit is resolved by marking the passage private, or by accepting that exact
+// line with a reason in tools/sensitive-prose-accepted.json; an acceptance
+// expires the moment the line changes. The limit, stated plainly: a phrase
+// list catches the categories that have recurred and will not catch a novel
+// phrasing, and the scan is line-based, so a phrase split across a hard line
+// wrap is not seen. It is a mitigation, not a solution.
 //
 // Tested by tools/test-sync-from-source.mjs, added 9 Sep 2026 by the change
 // that excluded access-protections.md, honoring the note this header used to
@@ -155,7 +166,26 @@ function mirroredNow() {
     }
   }
   walk(DEST)
-  return out.sort()
+  const skip = ignored(out)
+  return out.filter((rel) => !skip.has(rel)).sort()
+}
+
+// The walk sees what git ignores, so a Finder-created .DS_Store made it want
+// `remove .DS_Store` and left --check noisy forever after, which ruins a gate
+// whose whole value is being quiet. So the mirror's own .gitignore is honoured,
+// asking git rather than reimplementing its rules. Exit 1 means nothing is
+// ignored, and a DEST that is not a repo (the test fixtures) ignores nothing.
+// NUL-separated both ways: git quotes a non-ASCII path in its default output,
+// so an ignored `decisions/café.log` never matched and a sync deleted it.
+function ignored(rels) {
+  if (!existsSync(join(DEST, ".git"))) return new Set()
+  try {
+    const out = execFileSync("git", ["-C", DEST, "check-ignore", "--stdin", "-z"], { input: rels.join("\0"), encoding: "utf8" })
+    return new Set(out.split("\0").filter(Boolean))
+  } catch (e) {
+    if (e.status === 1) return new Set()
+    throw e
+  }
 }
 
 // Markers tolerate the ways they actually get written: indented to line up
@@ -183,6 +213,129 @@ const MARKER_SHAPED = /<!-+\s*\/?\s*private\b/i
 const COMMENT_OPEN = /<!-+/
 const COMMENT_CLOSE = /-+>/
 
+// The phrases the scan looks for, one per line. Phrases only: a bare word like
+// "secret" or "token" is the vocabulary of the guards mirrored here and would
+// flag the hooks every run. Word boundaries where a phrase could sit inside a
+// longer innocent word; "unprotected" needs none, "token" alone never matches.
+// A phrase's words may be joined by a space, a hyphen or an underscore.
+const SENSITIVE = [
+  /\bbranch[ _-]protection/i,
+  /\bprotected[ _-]branch/i,
+  /unprotected/i,
+  /\bsecurity[ _-](review|audit)/i,
+  /\b(never|not)[ _-]been[ _-]reviewed/i,
+  /unreviewed/i,
+  /\bbefore[ _-]launch\b/i,
+  /\bpre[ _-]launch/i,
+  /unlaunched/i,
+  /\battack[ _-]surface/i,
+  /\bjob[ _-]search/i,
+  /\bapi[ _-]key/i,
+  /\bsecret[ _-]key/i,
+  /\bcron[ _-]secret/i,
+  /\binvite[ _-]token\b/i,
+  /\baccess[ _-]token\b/i,
+  // Any address, except placeholder hosts: those in tests and templates are not addresses.
+  /https?:\/\/(?!(www\.)?example\.(com|org|net)(?![\w.-])|localhost(?![\w.-])|127\.0\.0\.1(?![\w.-])|<|\$\{)/i,
+]
+
+// Lines accepted as fine to publish, each with a reason. Lives under tools/,
+// which the mirror never removes. An entry accepts every phrase on that one
+// exact line in that one file, and goes stale as soon as the line changes.
+const ACCEPTED_FILE = join(DEST, "tools", "sensitive-prose-accepted.json")
+const MIN_REASON = 15
+
+// Returns a set of "file\ntext" keys. Refuses anything it cannot vouch for:
+// an entry with a missing field, a reason too short to mean anything later, or
+// a line that is no longer in the publishable text. A stale acceptance kept
+// quiet would be a permanent mute, which hides the next incident as well as
+// having no scan at all.
+function loadAccepted(publishable) {
+  if (!existsSync(ACCEPTED_FILE)) return new Set()
+  const rel = relative(DEST, ACCEPTED_FILE)
+  let entries
+  try {
+    entries = JSON.parse(readFileSync(ACCEPTED_FILE, "utf8"))
+  } catch (e) {
+    throw new Error(`${rel} is not valid JSON (${e.message}). Nothing was written.`)
+  }
+  if (!Array.isArray(entries)) throw new Error(`${rel} must be a JSON array of entries. Nothing was written.`)
+
+  const accepted = new Set()
+  entries.forEach((entry, i) => {
+    const at = `${rel} entry ${i + 1}`
+    for (const field of ["file", "text", "reason"]) {
+      if (typeof entry?.[field] !== "string" || !entry[field].trim()) {
+        throw new Error(`${at} lacks a "${field}". Each entry needs file, text and reason. Nothing was written.`)
+      }
+    }
+    if (entry.reason.trim().length < MIN_REASON) {
+      throw new Error(
+        `${at} gives a reason under ${MIN_REASON} characters ("${entry.reason}"). ` +
+          `Say why the line is fine to publish, for whoever reads this later. Nothing was written.`,
+      )
+    }
+    const text = entry.text.trim()
+    const buf = publishable.get(entry.file)
+    const present = buf !== undefined && buf.toString("utf8").split("\n").some((l) => l.trim() === text)
+    if (!present) {
+      throw new Error(
+        `${at} is stale: no publishable line in ${entry.file} reads\n  "${text}"\n` +
+          `The line changed or went away, so the acceptance has expired. Re-read the new line and ` +
+          `accept it afresh, or drop the entry. Nothing was written.`,
+      )
+    }
+    accepted.add(`${entry.file}\n${text}`)
+  })
+  return accepted
+}
+
+// Scans the publishable text of every file. Throws once, listing every hit,
+// so one run shows the whole job rather than the first line of it.
+function scanSensitive(publishable, sourceLines) {
+  const accepted = loadAccepted(publishable)
+  const hits = []
+  for (const [rel, buf] of publishable) {
+    const lines = buf.toString("utf8").split("\n")
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      const trimmed = line.trim()
+      if (accepted.has(`${rel}\n${trimmed}`)) continue
+      const phrases = []
+      let first = null
+      for (const re of SENSITIVE) {
+        const m = re.exec(line)
+        if (!m) continue
+        phrases.push(m[0])
+        if (first === null || m.index < first) first = m.index
+      }
+      if (phrases.length) {
+        hits.push({ rel, line: sourceLines.get(rel)?.[i] ?? i + 1, phrases, text: trimmed, at: first })
+      }
+    }
+  }
+  if (!hits.length) return
+
+  const excerpt = ({ text, at }) => {
+    const start = Math.max(0, Math.min(at, text.length - 80))
+    const piece = text.slice(start, start + 80)
+    return `${start > 0 ? "..." : ""}${piece}${start + 80 < text.length ? "..." : ""}`
+  }
+  const listed = hits
+    .map((h) => `  ${h.rel}:${h.line}  ${h.phrases.map((p) => `"${p}"`).join(", ")}\n    ${excerpt(h)}`)
+    .join("\n")
+  const entries = hits
+    .map((h) => `  ${JSON.stringify({ file: h.rel, text: h.text, reason: "" })}`)
+    .join(",\n")
+  throw new Error(
+    `Unmarked sensitive prose in the publishable text. Nothing was written.\n\n${listed}\n\n` +
+      `To resolve each hit, either wrap the passage in the source:\n` +
+      `  <!-- private: why -->\n  ...\n  <!-- /private -->\n` +
+      `or, if the line is fine to publish, add it to ${relative(DEST, ACCEPTED_FILE)} with a reason ` +
+      `of at least ${MIN_REASON} characters:\n${entries}`,
+  )
+}
+
 // There is deliberately no exemption for fenced blocks or backticks. The second
 // fix had one, so the syntax could be documented in the record it protects, and
 // the third review broke it twice over: one unmatched fence line anywhere above
@@ -193,11 +346,14 @@ const COMMENT_CLOSE = /-+>/
 // So no line is exempt. The cost is that a mirrored document cannot quote this
 // syntax; it is documented in this header instead, which is not mirrored.
 
-// Returns the publishable text and how many passages were dropped. Throws on
-// anything ambiguous rather than guessing, since guessing wrong publishes.
+// Returns the publishable text, how many passages were dropped, and for each
+// publishable line the source line it came from (a notice maps to its close
+// marker), so the prose scan can name a line someone can actually open. Throws
+// on anything ambiguous rather than guessing, since guessing wrong publishes.
 function withhold(rel, text) {
   const lines = text.split("\n")
   const out = []
+  const from = []
   let openedAt = null
   let reason = null
   let indent = ""
@@ -276,26 +432,31 @@ function withhold(rel, text) {
       // indented bullet it would end the list item and split one entry into
       // three blocks on the rendered page, which is what a stranger reads.
       out.push(`${indent}*(Withheld from the public mirror: ${reason})*`)
+      from.push(i + 1)
       openedAt = null
       reason = null
       count++
       continue
     }
 
-    if (openedAt === null) out.push(raw)
+    if (openedAt === null) {
+      out.push(raw)
+      from.push(i + 1)
+    }
   }
 
   if (openedAt !== null) {
     throw new Error(`Unclosed <!-- private --> at ${rel}:${openedAt}. Nothing was written.`)
   }
 
-  return { text: out.join("\n"), count }
+  return { text: out.join("\n"), count, from }
 }
 
 // Every file is transformed before anything is written, so a malformed marker
 // in the last file cannot leave the first ones already published.
 let withheldPassages = 0
 const publishable = new Map()
+const sourceLines = new Map()
 for (const rel of sourceFiles()) {
   const raw = readFileSync(join(SOURCE, rel))
   if (!rel.endsWith(".md")) {
@@ -307,10 +468,15 @@ for (const rel of sourceFiles()) {
     publishable.set(rel, raw)
     continue
   }
-  const { text, count } = withhold(rel, raw.toString("utf8"))
+  const { text, count, from } = withhold(rel, raw.toString("utf8"))
   withheldPassages += count
   publishable.set(rel, count ? Buffer.from(text, "utf8") : raw)
+  if (count) sourceLines.set(rel, from)
 }
+
+// The scan runs on whatever is publishable, after withholding and before any
+// write, so a hit in the last file cannot leave the first ones published.
+scanSensitive(publishable, sourceLines)
 
 const want = [...publishable.keys()]
 const have = mirroredNow()
