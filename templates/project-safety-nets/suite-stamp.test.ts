@@ -19,7 +19,14 @@ import { chmodSync, mkdtempSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { markEdited, recordFullRun, needsFullRun, stampPaths } from "./suite-stamp.mjs"
+import {
+  markEdited,
+  markOutageAnnounced,
+  outageAnnounced,
+  recordFullRun,
+  needsFullRun,
+  stampPaths,
+} from "./suite-stamp.mjs"
 
 /** A throwaway project root. Only its path matters; nothing is read from it. */
 function project() {
@@ -124,5 +131,21 @@ describe("which project a stamp belongs to", () => {
     const { edited, ran } = stampPaths(root)
     expect(edited.startsWith(root)).toBe(false)
     expect(ran.startsWith(root)).toBe(false)
+  })
+})
+
+describe("the one-per-outage marker", () => {
+  it("expires, so an outage long after the last one is announced again", () => {
+    // Found by review: the marker only clears on a turn that owes a run while
+    // the database answers, so a recovery nobody observed would otherwise hide
+    // the next outage for good.
+    const root = track(project())
+    markOutageAnnounced(root, Date.now() - 4 * 60 * 60 * 1000)
+    expect(outageAnnounced(root)).toBe(false)
+  })
+  it("holds within an outage", () => {
+    const root = track(project())
+    markOutageAnnounced(root)
+    expect(outageAnnounced(root)).toBe(true)
   })
 })

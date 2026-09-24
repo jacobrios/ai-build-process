@@ -35,6 +35,25 @@
 //     and have caused no incidents.
 // Anything it blocks is reportable to Jacob as a Jacob-built guard, per the
 // guardrail rule; if the branch point is deliberate, he can say so.
+//
+// EXPLICIT origin/main (OR origin/master) START POINT
+// The current-branch and clean-tree checks are both proxies for one real
+// question: where will this branch be cut from. An explicit
+// `git checkout -b <name> origin/main` answers that directly, so the current
+// branch no longer matters and that check is skipped; the clean-tree check
+// still applies, because uncommitted work in the checkout may belong to
+// another session regardless of where the new branch points. A command can
+// cut more than one branch (chained with && / ; / |), so trust requires
+// EVERY cut in the command to name origin/main or origin/master exactly;
+// one untrusted cut anywhere still triggers the current-branch check for the
+// whole command, otherwise a trusted first cut would launder an untrusted
+// one riding along in the same line. There is no
+// fetch requirement here: this hook matches command text, it cannot know
+// whether a fetch actually ran or succeeded, and a check it cannot verify
+// would be theatre, the same lesson the 18 August merge-gate change drew.
+// Residual risk: a stale local origin/main costs a rebase later and surfaces
+// at merge time, which is a much smaller harm than the 1 September incident
+// this guard exists for.
 
 import { execFileSync } from "node:child_process";
 
@@ -55,6 +74,24 @@ process.stdin.on("end", () => {
   const cuts = /(^|[;&|]|\s)git\s+(checkout\s+-b|switch\s+-c)\s/.test(cmd);
   if (!cuts || /\bgit\s+worktree\b/.test(cmd)) process.exit(0);
 
+  // Pull the start point out of every `git checkout -b <name> [<start>]` /
+  // `git switch -c <name> [<start>]` in the command. A command can cut more
+  // than one branch (chained with && / ; / |), so trust requires EVERY cut
+  // to name origin/main or origin/master exactly as its start point; one
+  // untrusted cut anywhere (a different start point, or none at all) means
+  // the current-branch check still applies to the whole command, same as
+  // before this task.
+  const cutStartPoints = /(?:^|[;&|]|\s)git\s+(?:checkout\s+-b|switch\s+-c)\s+(\S+)(?:\s+(\S+))?/g;
+  let cutMatch;
+  let sawCut = false;
+  let trustedStart = true;
+  while ((cutMatch = cutStartPoints.exec(cmd)) !== null) {
+    sawCut = true;
+    const start = cutMatch[2];
+    if (start !== "origin/main" && start !== "origin/master") trustedStart = false;
+  }
+  trustedStart = sawCut && trustedStart;
+
   const cwd = data.cwd || process.cwd();
   const git = (args) => {
     try {
@@ -69,8 +106,11 @@ process.stdin.on("end", () => {
 
   const dirty = git(["status", "--porcelain"]);
   const problems = [];
-  if (branch && branch !== "main" && branch !== "master") {
-    problems.push(`HEAD is on "${branch}", not main, so the new branch would be cut from it`);
+  if (!trustedStart && branch && branch !== "main" && branch !== "master") {
+    problems.push(
+      `HEAD is on "${branch}", not main, so the new branch would be cut from it ` +
+        `(or run git checkout -b <name> origin/main from a clean tree)`
+    );
   }
   if (dirty) {
     const n = dirty.split("\n").filter(Boolean).length;

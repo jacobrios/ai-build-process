@@ -50,6 +50,54 @@ echo "fails open:"
 check "outside a repo"           0 "$(run "$TMP" 'git checkout -b feat/x')"
 echo 'not json' | node "$HOOK" >/dev/null 2>&1; check "unparseable stdin" 0 "$?"
 
+# An explicit origin/main (or origin/master) start point answers "where will
+# this branch be cut from" directly, so the current-branch check no longer
+# applies. Still on other-session-work, still clean, from the block above.
+git update-ref refs/remotes/origin/main HEAD
+git update-ref refs/remotes/origin/master HEAD
+echo "explicit origin/main start point, feature branch, clean:"
+check "checkout -b with origin/main"    0 "$(run "$R" 'git checkout -b x origin/main')"
+check "switch -c with origin/main"      0 "$(run "$R" 'git switch -c x origin/main')"
+check "checkout -b with origin/master"  0 "$(run "$R" 'git checkout -b x origin/master')"
+check "checkout -b with other start"    2 "$(run "$R" 'git checkout -b x origin/feature')"
+check "checkout -b with no start point" 2 "$(run "$R" 'git checkout -b x')"
+
+echo "explicit origin/main start point, feature branch, dirty:"
+echo dirty >> b.txt
+check "still blocked when dirty"        2 "$(run "$R" 'git checkout -b x origin/main')"
+git checkout -q -- b.txt
+
+echo "explicit origin/main start point, on main:"
+git checkout -q main
+check "checkout -b with origin/main from main" 0 "$(run "$R" 'git checkout -b x origin/main')"
+
+echo "blocked message names the alternative:"
+git checkout -q other-session-work
+msg="$(printf '{"tool_input":{"command":%s},"cwd":%s}' \
+  "$(printf '%s' 'git checkout -b fix-x' | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')" \
+  "$(printf '%s' "$R" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')" \
+  | node "$HOOK" 2>&1 1>/dev/null)"
+case "$msg" in
+  *origin/main*) pass=$((pass+1)); echo "  ok    message names origin/main" ;;
+  *) fail=$((fail+1)); echo "  FAIL  message names origin/main (got: $msg)" ;;
+esac
+
+# A command can cut more than one branch. Trust requires EVERY cut in the
+# command to name origin/main or origin/master exactly; one untrusted cut
+# anywhere in the command means the current-branch check still applies.
+# Still on other-session-work, clean, from the block above.
+echo "compound commands, feature branch, clean:"
+check "second cut has no start point (&&)" 2 "$(run "$R" 'git checkout -b a origin/main && git checkout -b b')"
+check "second cut names a branch (;)"       2 "$(run "$R" 'git checkout -b a origin/main ; git switch -c b feature')"
+check "both cuts name origin/main"          0 "$(run "$R" 'git checkout -b a origin/main && git checkout -b b origin/main')"
+
+# Look-alike start points must not be treated as trusted: the comparison is
+# an exact string match, not a prefix or "starts with origin/main" test.
+echo "look-alike start points, feature branch, clean:"
+check "origin/main~3"   2 "$(run "$R" 'git checkout -b x origin/main~3')"
+check "origin/main-old" 2 "$(run "$R" 'git checkout -b x origin/main-old')"
+check "origin/main^"    2 "$(run "$R" 'git checkout -b x origin/main^')"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
