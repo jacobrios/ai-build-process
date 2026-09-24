@@ -80,6 +80,107 @@ function extraAllowedRoots() {
   ]
 }
 
+// THE LINKED WORKTREE THE SESSION ACTUALLY STANDS IN (added 23 September 2026)
+// An Agent spawned with worktree isolation got its own linked worktree as its real
+// cwd, but the harness set CLAUDE_PROJECT_DIR to the PARENT session's worktree, a
+// sibling directory of the same repository. The anchor above stayed put by design, so
+// every write in the agent's own worktree was denied. This widens the fence to also
+// cover the worktree the hook input's cwd is actually standing in, when it can be
+// shown to be a linked worktree of the same repository as the anchor.
+//
+// Why the main checkout is excluded: the main checkout is itself a worktree of the
+// same repository, so a same-repository rule with no further condition would let any
+// worktree session `cd` into it and act as if it owned it. On 4 September only
+// `pull --ff-only` and `branch -d` were opened from a worktree against the main
+// checkout, with checkout, switch, reset, restore, clean, stash, rebase and merge
+// deliberately kept blocked, because the 1 September incident (branch-cut-guard.mjs)
+// was exactly a `cd` into the main checkout sweeping another session's 32 unmerged
+// commits into a branch (PR #112). Allowing the main checkout outright here would
+// reopen that with one `cd`, so only a LINKED worktree (its git dir lives inside
+// `.git/worktrees/<name>`, not the repository's common dir itself) qualifies.
+//
+// Why this does not reintroduce the cwd-anchoring bugs fixed 11 Aug 2026 (fa5d797):
+// the anchor computed above never moves, so a subfolder `cd` still cannot shrink the
+// fence. And the extra root is only added when its git COMMON dir matches the
+// anchor's, so a `cd` into an unrelated repository cannot move the fence there either;
+// this is additive; it never replaces the anchor with the cwd's own root. The accepted
+// residual: a deliberate `cd` into another live session's linked worktree of the SAME
+// repository makes that worktree writable from here too.
+//
+// Nearest ancestor-or-self of `dir` with a `.git` entry (a directory for the main
+// checkout, a file for a linked worktree). Independent of resolveProjectRoot: that
+// one prefers CLAUDE_PROJECT_DIR and only falls back to a git walk; this always
+// walks, because it answers "what worktree does this cwd stand in", not "what is
+// the session's anchor".
+function worktreeRootContaining(dir) {
+  let probe = existsSync(dir) ? realpathSync(dir) : resolve(dir)
+  for (;;) {
+    if (existsSync(join(probe, ".git"))) return probe
+    const parent = dirname(probe)
+    if (parent === probe) return null
+    probe = parent
+  }
+}
+
+// Git environment variables that override which repository a `-C <dir>` call
+// actually answers for. If the hook's own process inherited one of these (a
+// session started with GIT_DIR set, for instance), every directory asked about
+// would report the SAME repository, the one named by the env var, regardless of
+// which directory `-C` points at. That breaks the one thing this exception is
+// built on: telling "the same repository as the anchor" apart from "a different
+// one". Found in review 23 September 2026, with three confirmed cases where an
+// inherited GIT_DIR made the main checkout, and an unrelated repository, both
+// answer as the anchor's own repository and become writable. Both git calls in
+// this file run with these scrubbed, never with the hook's raw environment.
+const GIT_ENV_OVERRIDES = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_CEILING_DIRECTORIES",
+]
+function scrubbedGitEnv() {
+  const env = { ...process.env }
+  for (const key of GIT_ENV_OVERRIDES) delete env[key]
+  return env
+}
+
+// A directory's git dir and common dir, both absolute and realpath'd. Any failure,
+// including "not a git repository" or git being unavailable, answers null. Callers
+// treat null as "add nothing": this exception is opt-in evidence, never opt-out.
+function gitDirs(dir) {
+  try {
+    const out = execFileSync(
+      "git",
+      ["-C", dir, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
+      { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"], env: scrubbedGitEnv() }
+    )
+      .trim()
+      .split("\n")
+    if (out.length !== 2 || !out[0] || !out[1]) return null
+    return { gitDir: realpathSync(out[0]), commonDir: realpathSync(out[1]) }
+  } catch {
+    return null
+  }
+}
+
+// The one extra root this exception can add, or null. `baseIsAllowed` must be built
+// from the anchor and the standing extra roots WITHOUT this one, so "already inside
+// an allowed root" cannot see its own answer.
+function linkedWorktreeRoot(shellCwd, projectDir, baseIsAllowed) {
+  const wtRoot = worktreeRootContaining(shellCwd)
+  if (!wtRoot || wtRoot === projectDir || baseIsAllowed(wtRoot)) return null
+
+  const wt = gitDirs(wtRoot)
+  const anchor = gitDirs(projectDir)
+  if (!wt || !anchor) return null
+  if (wt.commonDir !== anchor.commonDir) return null // a different repository
+  if (wt.gitDir === wt.commonDir) return null // the main checkout, not linked
+
+  return wtRoot
+}
+
 // Commands that destroy or relocate files. Every path argument is checked, because
 // `mv` removes its source: moving a tracked file out of the project is a destructive
 // change to the project, not a gentler version of copying it.
@@ -96,6 +197,116 @@ const DESTRUCTIVE = new Set(["rm", "rmdir", "mv", "shred", "truncate"])
 // with `mv` stopped and `cp` waved through for identical intent, which teaches an
 // agent that rephrasing gets past a guard.
 const COPYING = new Set(["cp", "rsync", "ditto"])
+
+// Commands that create a link. Only the LINK PATH is checked, the same as a copy
+// destination: creating the link is the write, and what it points at is merely read
+// through later. `ln`'s flags that take a value are `-t`/`--target-directory` (the
+// write destination) and `-S`/`--suffix` (a backup suffix, irrelevant to the
+// destination but still not a positional). A combined short form with only
+// boolean flags, like `-sf`, is still all flags, never a positional.
+//
+// FIX (23 Sept 2026, review round 2): the comment used to say `-t` was the only
+// flag taking a value, which missed `-S`/`--suffix`, and the parser only recognized
+// `-t` standing alone, which missed the combined cluster form (`-st DIR`) and the
+// attached form (`-tDIR`). `ln -st /outside a b` and `ln -t/outside a b` were both
+// allowed. macOS's own `ln` does not support these GNU forms; the fix is parse-only.
+//
+// DECLINED GAP (23 Sept 2026, same family as the 20 Aug cp finding): a link made
+// INSIDE the project can point OUTSIDE it at a secret, e.g.
+// `ln -s ~/.aws/credentials ./notes.txt`. A later read of that innocent-looking
+// name is judged by sensitive-read-guard.mjs on its own spelling, and its spelling
+// gives no hint of the secret behind it. Declined because setting this up takes
+// deliberate intent, and these guards exist to catch accidents, not to stop someone
+// determined to exfiltrate a secret on purpose.
+const LINKING = new Set(["ln"])
+
+// The path `ln` writes to. With two or more positional (non-flag) arguments, the
+// last one is where the link is created; the ones before it are read, not written.
+// With exactly one positional, `ln` creates the link in the current directory under
+// the source's own basename, so the directory itself is what gets checked. A
+// `-t DIR` / `--target-directory=DIR` / `--target-directory DIR` overrides both and
+// names the directory directly. No positionals (a malformed invocation) checks
+// nothing, same as a malformed `cp`.
+//
+// FIX (24 Sept 2026, review round 1): the space-separated GNU long form
+// (`--target-directory DIR`, no `=`) was not recognized, so `DIR` fell through as an
+// ordinary positional and the real destination was never checked. Reviewer verified
+// `ln --target-directory /outside a b` and `ln -s --target-directory /outside a b`
+// were both allowed from inside the project. `--target-directory` now consumes the
+// next argument exactly as `-t` does.
+//
+// FIX (23 Sept 2026, review round 2, part 1): `-t` or `--target-directory` with NO
+// following argument left `targetDir` as `undefined`, which later crashed the hook
+// (`undefined.replace` inside `canonical`). A crashing hook exits 1, and only exit 2
+// blocks, so the crash did not just fail to check the destination, it let the WHOLE
+// REST OF THE LINE through unchecked. Confirmed: `ln -t; rm -rf <outside>` exited 1
+// and the `rm` went unguarded. A missing value now means no target directory, the
+// same as if the flag had not been given, rather than a value that crashes later.
+//
+// FIX (23 Sept 2026, review round 2, part 2): the combined short-flag cluster
+// (`-st DIR`) and the attached short form (`-tDIR`) were not recognized, so their
+// value fell through as an ordinary positional argument and the real destination
+// went unchecked (`ln -st /outside a b` was allowed). `-S`/`--suffix` is now also
+// recognized as consuming a value, so it cannot be mistaken for a positional either.
+function lnDestination(args) {
+  let targetDir = null
+  const positionals = []
+  for (let j = 0; j < args.length; j++) {
+    const a = args[j]
+
+    if (a === "-t" || a === "--target-directory") {
+      const value = args[j + 1] ?? null
+      if (value !== null) targetDir = value
+      j++
+      continue
+    }
+    if (a.startsWith("--target-directory=")) {
+      targetDir = a.slice("--target-directory=".length)
+      continue
+    }
+    if (a === "-S" || a === "--suffix") { j++; continue } // consumes a value; not a destination
+    if (a.startsWith("--suffix=")) continue
+
+    // A SINGLE-DASH short flag or a combined short cluster (`-s`, `-sf`, `-st DIR`,
+    // `-tDIR`). `t` and `S` are the only letters that take a value; whatever
+    // follows that letter in the SAME token is its value, or, if nothing follows,
+    // the next token is. Any letter after that in the cluster would be the
+    // value's text, never a further flag, which is why the scan stops there.
+    //
+    // FIX (23 Sept 2026, review round 3): this used to match ANY token starting
+    // with `-`, long options included, so a long flag merely containing a "t" was
+    // misread as `-t` plus a value. `ln --interactive a b` read "eractive" as the
+    // target directory and never checked `b`, the real destination; the same
+    // happened for `--no-target-directory` and `--backup=existing` (an "S"). Long
+    // options are handled above by name (`--target-directory[=]`, `--suffix[=]`);
+    // every other long option is a plain flag that consumes nothing, which is
+    // exactly what falls through to the plain-flag branch below now that this one
+    // only matches a single leading dash.
+    if (a.startsWith("-") && !a.startsWith("--") && a !== "-") {
+      const letters = a.slice(1)
+      for (let k = 0; k < letters.length; k++) {
+        const letter = letters[k]
+        if (letter !== "t" && letter !== "S") continue
+        const attached = letters.slice(k + 1)
+        const value = attached !== "" ? attached : args[j + 1] ?? null
+        if (attached === "") j++
+        if (letter === "t" && value !== null) targetDir = value
+        break
+      }
+      continue
+    }
+
+    // Any other flag, long or short, that reaches here consumes nothing: a plain
+    // switch like `--interactive`, `-v`, or an unrecognized long option.
+    if (a.startsWith("-")) continue
+
+    positionals.push(a)
+  }
+  if (targetDir !== null) return targetDir
+  if (positionals.length >= 2) return positionals.at(-1)
+  if (positionals.length === 1) return "."
+  return null
+}
 
 // git subcommands that always write, whatever flags follow.
 //
@@ -161,6 +372,7 @@ function sameRepository(a, b) {
       encoding: "utf8",
       timeout: 2000,
       stdio: ["ignore", "pipe", "ignore"],
+      env: scrubbedGitEnv(),
     }).trim()
     return realpathSync(resolve(dir, out))
   }
@@ -301,9 +513,40 @@ function dropHeredocBodies(command) {
   return kept.join("\n")
 }
 
+// Splits a command line at `&&`, `||`, `;`, `|` and newlines, but only where those
+// characters are shell syntax. Inside single or double quotes they are text: a sed
+// script like `'s|a|b|'` or a jq filter like `'.x | select(.n > 3)'` is one argument.
+// The first version split on the raw string, which cut quoted arguments in half and
+// was wrong in both directions at once (16 September 2026): a `>` inside a quoted
+// sed regex was reported as a write to a nonsense path, and a real `> ~/file` after
+// a quoted `|` was read as quoted and let through. `>|` (force-overwrite) is one
+// operator, not a pipe, so it does not split either.
+function splitOutsideQuotes(command) {
+  const out = []
+  let cur = ""
+  let quote = null
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]
+    if (quote) {
+      cur += c
+      if (c === "\\" && quote === '"' && i + 1 < command.length) cur += command[++i]
+      else if (c === quote) quote = null
+      continue
+    }
+    if (c === "\\" && i + 1 < command.length) { cur += c + command[++i]; continue }
+    if (c === "'" || c === '"') { quote = c; cur += c; continue }
+    const two = command.slice(i, i + 2)
+    if (two === "&&" || two === "||") { out.push(cur); cur = ""; i++; continue }
+    if (c === ";" || c === "\n" || (c === "|" && command[i - 1] !== ">")) { out.push(cur); cur = ""; continue }
+    cur += c
+  }
+  out.push(cur)
+  return out
+}
+
 function checkBashCommand(command, cwd, isAllowed, projectDir) {
   // Split on shell separators, preserving order so `cd X && git commit` is understood.
-  const segments = dropHeredocBodies(command).split(/(?:&&|\|\||;|\||\n)/)
+  const segments = splitOutsideQuotes(dropHeredocBodies(command))
   let currentDir = cwd
 
   for (const segment of segments) {
@@ -401,6 +644,16 @@ function checkBashCommand(command, cwd, isAllowed, projectDir) {
         }
       }
     }
+
+    if (LINKING.has(cmd)) {
+      const destination = lnDestination(args)
+      if (destination !== null && !isUnresolvable(destination)) {
+        const full = canonical(destination, currentDir)
+        if (!isAllowed(full)) {
+          return { path: full, why: `\`${cmd}\` would create a link outside this project` }
+        }
+      }
+    }
   }
   return null
 }
@@ -420,7 +673,10 @@ process.stdin.on("end", () => {
   // while relative paths and `cd` tracking resolve against the shell's actual cwd.
   const shellCwd = data.cwd || process.cwd()
   const projectDir = resolveProjectRoot(shellCwd)
-  const roots = [projectDir, ...extraAllowedRoots()]
+  const baseRoots = [projectDir, ...extraAllowedRoots()]
+  const baseIsAllowed = makeIsAllowed(baseRoots)
+  const extraRoot = linkedWorktreeRoot(shellCwd, projectDir, baseIsAllowed)
+  const roots = extraRoot ? [...baseRoots, extraRoot] : baseRoots
   const isAllowed = makeIsAllowed(roots)
 
   // Three subagents in one session reached for /tmp instead of the scratchpad their

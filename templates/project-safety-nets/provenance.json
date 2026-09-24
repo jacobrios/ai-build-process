@@ -39,18 +39,6 @@
       "how": "backfilled: present there with run-tests-unless-docs.test.ts alongside it, which is also the test whose nested vitest exposed the suite-lock deadlock, so it demonstrably runs",
       "backfilled": true
     },
-    "full-suite-on-subagent-stop.mjs": {
-      "project": "interplanetary-groups",
-      "on": "2026-08-13",
-      "how": "backfilled: present there with full-suite-on-subagent-stop.test.ts alongside it, last touched on this date",
-      "backfilled": true
-    },
-    "suite-stamp.mjs": {
-      "project": "interplanetary-groups",
-      "on": "2026-08-12",
-      "how": "backfilled: present there with suite-stamp.test.ts alongside it, last touched on this date",
-      "backfilled": true
-    },
     "project-root.mjs": {
       "project": "interplanetary-groups",
       "on": "2026-08-13",

@@ -162,6 +162,29 @@ bash_check 2 "move a tracked file out"           "\"mv docs/notes.txt /private/t
 bash_check 0 "move within the project"           '"mv src/a.ts src/b.ts"'
 
 echo
+echo "LN CREATES A LINK (added 23 Sept 2026): only the link path is checked, never what it points at"
+bash_check 0 "link an outside file into the project"        "\"ln -s $H/Documents/secret.txt ./link\""
+bash_check 2 "link a project file out of the project"       "\"ln -s ./x $OTHER/link\""
+bash_check 0 "combined flags -sf, destination in project"   '"ln -sf a b"'
+bash_check 2 "single positional, cwd outside the project"   "\"cd $OTHER && ln -s /x\""
+bash_check 0 "single positional, cwd inside the project"    '"ln -s /x"'
+bash_check 0 "link into a fixed allowed root"                '"ln -s x ~/.claude/foo"'
+bash_check 2 "-t DIR names an outside destination"           "\"ln -s a -t $OTHER\""
+bash_check 2 "--target-directory=DIR names an outside destination" "\"ln -s a --target-directory=$OTHER\""
+bash_check 0 "-t DIR names the project itself"               "\"ln -s a -t $PROJ\""
+bash_check 0 "an unresolvable destination"                   '"ln -s a \"$TMPDIR/b\""'
+bash_check 2 "space-separated --target-directory DIR, flag first" "\"ln --target-directory /private/tmp/outside-dir a b\""
+bash_check 2 "space-separated --target-directory DIR, flag after -s" "\"ln -s --target-directory /private/tmp/outside-dir a b\""
+bash_check 2 "bare -t with no value must not crash past the rm" "\"ln -t; rm -rf $OTHER/some-outside-path\""
+bash_check 2 "bare --target-directory with no value, same shape" "\"ln --target-directory; rm -rf $OTHER/some-outside-path\""
+bash_check 2 "combined short cluster -st DIR"     "\"ln -st $OTHER a b\""
+bash_check 2 "attached form -tDIR"                "\"ln -t$OTHER a b\""
+bash_check 2 "--interactive is a long flag, not -t + value" "\"ln --interactive a $OTHER/b\""
+bash_check 2 "--no-target-directory is a long flag, not -t + value" "\"ln --no-target-directory a $OTHER/b\""
+bash_check 2 "--backup=existing is a long flag, not -S + value"     "\"ln --backup=existing a $OTHER/b\""
+bash_check 2 "-s --no-target-directory, long flag after a short one" "\"ln -s --no-target-directory a $OTHER/b\""
+
+echo
 echo "WORKTREE RESYNC — a worktree and its main checkout are one repository"
 # Real fixture rather than fake paths: the hook asks git whether two directories
 # share a repository, so only a real worktree can exercise that answer. Built and
@@ -200,6 +223,76 @@ rm -rf "$WT_ROOT"
 
 
 echo
+echo "LINKED WORKTREE THE SESSION STANDS IN (added 23 Sept 2026): the anchor can be a"
+echo "  SIBLING worktree, not the one the session's cwd actually sits in"
+# Real fixture: a main checkout with three linked worktrees (wt-a, wt-b, wt-c), plus
+# a separate repo with its own linked worktree. The session is anchored at wt-a
+# (CLAUDE_PROJECT_DIR), the way the incident's harness anchored a spawned agent at
+# its parent session's worktree, while the agent's own cwd stood in a sibling.
+LW_ROOT="$H/code/.repo-boundary-fixture-lw-$$"
+LW_OTHER_ROOT="$H/code/.repo-boundary-fixture-lw-other-$$"
+trap 'rm -rf "$LW_ROOT" "$LW_OTHER_ROOT"' EXIT
+LW_MAIN="$LW_ROOT/main"
+git init -q "$LW_MAIN" 2>/dev/null
+git -C "$LW_MAIN" -c user.email=t@t -c user.name=t commit -q --allow-empty -m seed
+git -C "$LW_MAIN" worktree add -q "$LW_MAIN/.claude/worktrees/wt-a" -b wt-a 2>/dev/null
+git -C "$LW_MAIN" worktree add -q "$LW_MAIN/.claude/worktrees/wt-b" -b wt-b 2>/dev/null
+git -C "$LW_MAIN" worktree add -q "$LW_MAIN/.claude/worktrees/wt-c" -b wt-c 2>/dev/null
+WT_A="$LW_MAIN/.claude/worktrees/wt-a"
+WT_B="$LW_MAIN/.claude/worktrees/wt-b"
+WT_C="$LW_MAIN/.claude/worktrees/wt-c"
+mkdir -p "$WT_B/sub"
+echo hi > "$WT_B/file.txt"
+
+LW_OTHER_MAIN="$LW_OTHER_ROOT/main"
+git init -q "$LW_OTHER_MAIN" 2>/dev/null
+git -C "$LW_OTHER_MAIN" -c user.email=t@t -c user.name=t commit -q --allow-empty -m seed
+git -C "$LW_OTHER_MAIN" worktree add -q "$LW_OTHER_MAIN/.claude/worktrees/wt-other" -b wt-other 2>/dev/null
+WT_OTHER="$LW_OTHER_MAIN/.claude/worktrees/wt-other"
+
+# Every case below anchors CLAUDE_PROJECT_DIR at wt-a; cwd is what varies.
+lw_check() { anchored_check "$1" "$2" "$3" "$WT_A"; }
+
+lw_check 0 "write into wt-b, the session's own worktree" "{\"tool_name\":\"Write\",\"cwd\":\"$WT_B\",\"tool_input\":{\"file_path\":\"$WT_B/new.txt\"}}"
+lw_check 0 "bash rm of a file inside wt-b"           "{\"tool_name\":\"Bash\",\"cwd\":\"$WT_B\",\"tool_input\":{\"command\":\"rm file.txt\"}}"
+lw_check 0 "bash git branch -m inside wt-b"          "{\"tool_name\":\"Bash\",\"cwd\":\"$WT_B\",\"tool_input\":{\"command\":\"git branch -m renamed\"}}"
+lw_check 0 "write to wt-b root file, cwd a subfolder" "{\"tool_name\":\"Write\",\"cwd\":\"$WT_B/sub\",\"tool_input\":{\"file_path\":\"$WT_B/new.txt\"}}"
+lw_check 2 "write into wt-c is still blocked"        "{\"tool_name\":\"Write\",\"cwd\":\"$WT_B\",\"tool_input\":{\"file_path\":\"$WT_C/new.txt\"}}"
+lw_check 2 "write into the main checkout is blocked" "{\"tool_name\":\"Write\",\"cwd\":\"$WT_B\",\"tool_input\":{\"file_path\":\"$LW_MAIN/README.md\"}}"
+lw_check 2 "cwd IS the main checkout, still blocked, not linked" "{\"tool_name\":\"Write\",\"cwd\":\"$LW_MAIN\",\"tool_input\":{\"file_path\":\"$LW_MAIN/README.md\"}}"
+lw_check 2 "the other repo's own linked worktree"    "{\"tool_name\":\"Write\",\"cwd\":\"$WT_OTHER\",\"tool_input\":{\"file_path\":\"$WT_OTHER/new.txt\"}}"
+lw_check 2 "a non-git temp cwd gains nothing"        "{\"tool_name\":\"Bash\",\"cwd\":\"/private/tmp/claude-501/no-such-repo-$$\",\"tool_input\":{\"command\":\"rm $H/Documents/notes.txt\"}}"
+
+echo
+echo "  INHERITED GIT_DIR/GIT_COMMON_DIR must not widen the fence (added 23 Sept 2026)"
+# If Claude Code's own process was started with GIT_DIR (or GIT_COMMON_DIR) set, an
+# unscrubbed git call reports every directory as belonging to the anchor's repository,
+# no matter which directory it was actually asked about. That would make the main
+# checkout, and any unrelated directory, read as "the same repository" and pass the
+# exception meant only for a genuine linked worktree.
+WT_A_GITDIR=$(git -C "$WT_A" rev-parse --path-format=absolute --git-dir)
+WT_A_COMMONDIR=$(git -C "$WT_A" rev-parse --path-format=absolute --git-common-dir)
+env_check() {
+  local expect="$1" desc="$2" json="$3" var="$4" val="$5"
+  echo "$json" | env CLAUDE_PROJECT_DIR="$WT_A" "$var=$val" node "$HOOK" >/dev/null 2>&1
+  local got=$?
+  if [ "$got" = "$expect" ]; then
+    printf "  PASS  %-54s (exit %s)\n" "$desc" "$got"; pass=$((pass+1))
+  else
+    printf "  FAIL  %-54s expected %s, got %s\n" "$desc" "$expect" "$got"; fail=$((fail+1))
+  fi
+}
+env_check 2 "GIT_DIR set to the anchor's own git dir, writing the main checkout" \
+  "{\"tool_name\":\"Write\",\"cwd\":\"$LW_MAIN\",\"tool_input\":{\"file_path\":\"$LW_MAIN/README.md\"}}" \
+  GIT_DIR "$WT_A_GITDIR"
+env_check 2 "GIT_COMMON_DIR set to the anchor's own common dir, writing the main checkout" \
+  "{\"tool_name\":\"Write\",\"cwd\":\"$LW_MAIN\",\"tool_input\":{\"file_path\":\"$LW_MAIN/README.md\"}}" \
+  GIT_COMMON_DIR "$WT_A_COMMONDIR"
+
+rm -rf "$LW_ROOT" "$LW_OTHER_ROOT"
+
+
+echo
 echo "REDIRECTION (added 9 Sept 2026): cat > path, >>, tee are writes too"
 echo "  must still work"
 bash_check 0 "> /dev/null"                       '"echo x > /dev/null"'
@@ -232,6 +325,32 @@ bash_check 2 "attached form >path"               "\"echo x>$OTHER/attached.md\""
 bash_check 2 "quoted target in another repo"     "\"echo x > \\\"$OTHER/notes.md\\\"\""
 bash_check 2 "heredoc body run by bash: > ~/x"    '"bash <<EOF\necho x > ~/notes.md\nEOF"'
 bash_check 2 "heredoc body run by sh: rm ~/x"      '"sh <<EOF\nrm ~/x\nEOF"'
+
+
+echo
+# LT spells "<" so this file never contains the three characters that open an
+# HTML comment; the public mirror's sync refuses any non-markdown file holding
+# them next to the word "private" (23 Sept 2026). The hook still receives them.
+LT='<'
+echo "QUOTED SEPARATORS (added 16 Sept 2026): | ; && inside quotes do not split the command"
+echo "  must still work"
+bash_check 0 "sed script with | and > (the 9 Sept case)" "\"sed -i '' 's|      if (/${LT}!-|--!?>/.test(withReason[1])) {|      if (false) {|' tools/sync-from-source.mjs\""
+bash_check 0 "awk with ; and > in quotes" "\"awk '{ if (\$1 > 5) print; }' data.txt\""
+bash_check 0 "perl with | and >" "\"perl -ne 'print if /a|b>c/' file.txt\""
+bash_check 0 "grep -E alternation with >" "\"grep -E 'foo|bar>baz' src/app.ts\""
+bash_check 0 "jq with | and >" "\"jq '.items[] | select(.n > 3)' data.json\""
+bash_check 0 "double-quoted | and >" "\"grep -E \\\"a|b > ~/x\\\" notes.md\""
+bash_check 0 "quoted && then > text" "\"echo 'done && echo x > ~/y'\""
+bash_check 0 "quoted ; rm text (older false block)" "\"echo 'x; rm ~/notes.md'\""
+bash_check 0 "node -e arrow => and quoted |" "\"node -e \\\"[1].filter(x => x > 0).join('|')\\\"\""
+bash_check 0 "escaped quote inside double quotes" "\"echo \\\"a \\\\\\\" && rm ~/notes.md\\\"\""
+echo "  must block"
+bash_check 2 "real > after a quoted |" "\"echo 'a|b' > ~/notes.md\""
+bash_check 2 "real >> after quoted ; and >" "\"awk '{ if (\$1 > 5) print; }' data.txt >> ~/out.txt\""
+bash_check 2 "real pipe to tee after quoted |" "\"grep -E 'a|b' x.txt | tee ~/out.txt\""
+bash_check 2 "real && rm after quoted |" "\"sed 's|a|b|' x.txt && rm ~/notes.md\""
+bash_check 2 "escaped quote outside quotes, then && rm" "\"echo it\\\\'s && rm ~/notes.md\""
+bash_check 2 ">| force-overwrite outside project" "\"echo x >| ~/out.txt\""
 
 echo
 echo "  $pass passed, $fail failed"

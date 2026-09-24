@@ -39,6 +39,16 @@ Same PR: the mirror's removal walk now honours its own `.gitignore`, after a Fin
 
 *(Withheld from the public mirror: operational detail about another repository)*
 
+## Quoted separators split the command, both ways (16 September 2026)
+
+Reported from ai-build-process: on 9 September the boundary guard blocked a `sed -i` edit whose quoted script used `|` as its delimiter and contained a regex for HTML comment markers, reporting it as output redirection to a nonsense path. (Wording changed 23 September 2026: the original quoted the regex verbatim, and its comment-opener characters made the public mirror's sync refuse this whole file. Substance unchanged.) The session worked around it with python3 and reported the block, which is what surfaced it.
+
+Root cause was not in the week-old redirection check but in the older command splitter underneath it. The guard cut a command into pieces at `|`, `;` and `&&` before looking at quotes, so the `|` characters in a sed script cut its quoted argument in half and the second half read as unquoted. Every check downstream inherited that. The report named one direction; reproducing it found both. A `>` inside quotes was a false block, and a real `> ~/file` after a quoted `|` (`echo 'a|b' > ~/notes.md`) was read as quoted and let through, a write outside the project that no test had tried. An older false block fell out of the same fix: `echo 'x; rm ~/y'` had been blocked as a delete.
+
+The splitter now tracks single and double quotes and backslash escapes, and treats `>|` as one operator rather than a pipe. 16 new cases, 140 total, all guards green; 13 further probes across awk, perl, grep, rg, jq, node, python and git commit messages all behaved. Five sabotages each turned tests red, but only after a correction: the first escape tests passed with the escape handling removed, because the redirection scanner has its own escape logic and was masking the splitter. Replaced with cases where the escape decides where the command splits. That is the fifth time a new test here could not fail as first written.
+
+The cost the report named is the right one to record. A guard that cries wolf gets routed around by habit, and a habit of routing around is exactly the behaviour that makes the real block, when it comes, get routed around too.
+
 ## The boundary guard learns to read redirection (9 September 2026)
 
 `repo-boundary.mjs` now treats `> path`, `>> path`, `2> path`, `&> path` and `tee path` as the writes they are, resolved and fenced exactly as `cp` destinations already were. 27 new cases in its test file (14 must-still-work, 13 must-block), 124 total, and eight sabotages each turned tests red.
@@ -406,3 +416,7 @@ deliberately: it is an obligation on the verification itself, not on the handoff
 at handoff time would mean discovering a layout problem after the branch is finished, which is
 exactly what happened here. Its position directly under the rendered-comparison rule is the
 point: a rendered comparison on the wrong screen size is still not a rendered comparison.
+
+## Slice and branch discipline: the branch-cut guard sentence (amended 23 September 2026)
+
+The start-from-current-main rule said `branch-cut-guard.mjs` "enforces both", which overstated it: the guard never compared local main to origin, it only checked the branch name and a clean tree. It came to light when the guard refused a helper agent cutting from `origin/main` in its own worktree, which is exactly as safe as cutting from main. The guard now accepts that start point (see `decisions/2026-09-23-agent-worktree-guards.md`), and the sentence now says what the guard actually does, in Jacob's approved wording. Kept short on purpose: the rule's own text carries the intent, the guard only enforces its checkable part.

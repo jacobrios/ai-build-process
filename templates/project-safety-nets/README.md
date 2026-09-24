@@ -224,6 +224,21 @@ human reading regexes by hand and none by anything automatic. That is why
 `protect-paths.test.ts` exists and why it ships alongside the hook rather than
 being left in the project that wrote it.
 
+**23 September 2026: the full-suite hook stops hammering a dead database.**
+A paused dev-test database came back with its pooler refusing logins, and every
+turn that owed a run fired about three hundred failed logins at it anyway,
+which plausibly kept the lockout alive and buried the one fact worth knowing
+under a 295-failure wall, once per turn. The hook now runs `db-probe.mjs` first:
+one `SELECT 1` through the same door the tests use (`pg`, DATABASE_URL as
+dotenv sees it), a few seconds at most. Unreachable means the suite is not run,
+the owed edit is **not** forgiven, and the agent hears one line once per outage;
+the marker clears the first time the database answers. A project with no
+DATABASE_URL or no `pg` behaves exactly as before. The per-edit hook was left
+alone on purpose: it runs a handful of tests, and a probe there would put a
+remote round trip on every edit forever. Reviewed by the session that hit the
+outage, which caught the gap that shaped the design: under exit 0 a stop hook's
+stderr never reaches the agent, so a silent skip would look like a pass.
+
 **12 August 2026, from interplanetary-groups PR #64: the test gate split in
 two, and the reason is a number.** The owner reported build runs going from
 about ninety minutes to between two and four hours. Measured across the session

@@ -18,7 +18,7 @@
 // run stamp disappears alongside the edit stamp, and the next finish runs.
 
 import { createHash } from "node:crypto"
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
@@ -45,6 +45,7 @@ export function stampPaths(root) {
   return {
     edited: join(STAMP_DIR, `${key}.edited`),
     ran: join(STAMP_DIR, `${key}.ran`),
+    outage: join(STAMP_DIR, `${key}.outage`),
   }
 }
 
@@ -102,4 +103,42 @@ export function needsFullRun(root) {
   if (ranAt === null || Number.isNaN(ranAt)) return true
 
   return editedAt >= ranAt
+}
+
+// The one-per-outage marker (23 Sept 2026). When the database will not answer,
+// the stop hook tells the agent once and then stays quiet until the database
+// answers again, so an outage costs one red line rather than a wall on every
+// turn. Kept per project like the other two stamps, so two sessions in one
+// checkout share one announcement. It never touches the edit or run stamps:
+// an outage must never count as a pass.
+
+/**
+ * An announcement older than this is treated as belonging to an earlier
+ * outage. The marker is only cleared on a turn that owes a run while the
+ * database answers, so a recovery nobody observed would otherwise hide the
+ * next outage for good. Found by review.
+ */
+export const OUTAGE_ANNOUNCEMENT_TTL_MS = 3 * 60 * 60 * 1000
+
+/** True when this outage has already been announced. Unreadable means no: one extra line is harmless. */
+export function outageAnnounced(root, now = Date.now()) {
+  const at = readStamp(stampPaths(root).outage)
+  if (at === null || Number.isNaN(at)) return false
+  return now - at < OUTAGE_ANNOUNCEMENT_TTL_MS
+}
+
+/** Record that the current outage has been announced. */
+export function markOutageAnnounced(root, at = Date.now()) {
+  writeStamp(stampPaths(root).outage, at)
+}
+
+/** The database answered: the next outage is a new one, and gets announced. */
+export function clearOutage(root) {
+  try {
+    rmSync(stampPaths(root).outage, { force: true })
+  } catch {
+    // Failing to clear means a later outage might go unannounced. It still
+    // never runs the suite against a dead database and never forgives an
+    // edit, so this degrades toward quiet, not toward green.
+  }
 }

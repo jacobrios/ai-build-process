@@ -32,11 +32,32 @@
 // suite in front of the thing that turned it red.
 
 import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
+import { classifyProbe } from "./db-probe.mjs"
 import { resolveProjectRoot } from "./project-root.mjs"
-import { needsFullRun, recordFullRun } from "./suite-stamp.mjs"
+import {
+  clearOutage,
+  markOutageAnnounced,
+  needsFullRun,
+  outageAnnounced,
+  recordFullRun,
+} from "./suite-stamp.mjs"
+
+const PROBE = fileURLToPath(new URL("./db-probe.mjs", import.meta.url))
 
 function defaultSpawn(cwd, args) {
   return spawnSync("npx", args, { stdio: "inherit", cwd }).status
+}
+
+/**
+ * One connection, one query, a few seconds at most: is the database answering?
+ * Run before the suite, and so before the suite's own lock is taken, which
+ * means an outage never leaves a lock waiting on a dead database. See
+ * db-probe.mjs for why it goes through the same door the tests use.
+ */
+function defaultProbe(root) {
+  const r = spawnSync(process.execPath, [PROBE], { cwd: root, encoding: "utf8", timeout: 8_000 })
+  return classifyProbe(r)
 }
 
 /**
@@ -47,12 +68,32 @@ function defaultSpawn(cwd, args) {
 export function runStop({
   shellCwd,
   spawn = defaultSpawn,
+  probe = defaultProbe,
   now = Date.now,
   stopHookActive = false,
   warn = console.error,
 }) {
   const root = resolveProjectRoot(shellCwd)
   if (!needsFullRun(root)) return 0
+
+  // Database first (23 Sept 2026). An unreachable database means: do not run
+  // the suite, do not forgive the owed edit, and say so once per outage. A
+  // held turn does not spend the announcement, because exit 2 is the only code
+  // the agent hears and a held turn cannot be blocked again. Everything below
+  // this block is unchanged: when the database answers, the gate is exactly
+  // what it was.
+  const reach = probe(root)
+  if (reach.status === "down") {
+    if (outageAnnounced(root) || stopHookActive) return 0
+    markOutageAnnounced(root)
+    warn(
+      `Database unreachable (${reach.code}), full suite not run. The edits are ` +
+        "still owed and the suite runs the first time the database answers. " +
+        "Said once per outage."
+    )
+    return 2
+  }
+  clearOutage(root)
 
   // Stamped with the time the run STARTED, not the time it finished: an edit
   // landing while the suite was running is not covered by that run, and the
@@ -84,6 +125,12 @@ export function runStop({
     return 0
   }
 
+  warn(
+    "The full suite did not come back clean. The narrow per-edit runs did " +
+      "not cover this, which is what this gate is for. Fix it before " +
+      "finishing the task. If nothing looks broken, check that the runner " +
+      "started at all: this same message covers the runner failing to run."
+  )
   return 2
 }
 
@@ -102,15 +149,6 @@ function main() {
       shellCwd: data && data.cwd,
       stopHookActive: Boolean(data && data.stop_hook_active),
     })
-
-    if (code !== 0) {
-      console.error(
-        "The full suite did not come back clean. The narrow per-edit runs did " +
-          "not cover this, which is what this gate is for. Fix it before " +
-          "finishing the task. If nothing looks broken, check that the runner " +
-          "started at all: this same message covers the runner failing to run."
-      )
-    }
 
     process.exit(code)
   })
