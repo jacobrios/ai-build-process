@@ -24,7 +24,9 @@
     "Entries marked backfilled were not observed being recorded; they were",
     "reconstructed on 3 September 2026 from what is checkable now. They are the",
     "weakest entries here and should be replaced by an observed run when one",
-    "happens, rather than trusted as if someone had watched them pass."
+    "happens, rather than trusted as if someone had watched them pass.",
+    "",
+    "24 September 2026: run-tests-unless-docs.mjs, project-root.mjs and suite-lock.mjs were changed materially (the test hooks now follow the work into git worktrees, and the suite lock is shared per repository), so their entries were removed per the rule above. Their new tests ran green only in a scratch copy, which is not a real project's suite. They are unproven until adopted and seen green in one."
   ],
   "proven": {
     "protect-paths.mjs": {
@@ -33,22 +35,30 @@
       "how": "backfilled: present there with protect-paths.test.ts alongside it, last touched on this date, and that project's suite was green at 1730 on 3 Sept 2026",
       "backfilled": true
     },
-    "run-tests-unless-docs.mjs": {
-      "project": "interplanetary-groups",
-      "on": "2026-08-13",
-      "how": "backfilled: present there with run-tests-unless-docs.test.ts alongside it, which is also the test whose nested vitest exposed the suite-lock deadlock, so it demonstrably runs",
-      "backfilled": true
-    },
     "project-root.mjs": {
       "project": "interplanetary-groups",
-      "on": "2026-08-13",
-      "how": "backfilled, and indirectly: it has no tests of its own anywhere, but both hook test files import it, so a break in it turns them red",
-      "backfilled": true
+      "on": "2026-09-24",
+      "how": "Post-merge live check 24 Sept 2026, IPG main e6e0e68: a real harness-fired edit in a worktree recorded that worktree for the session; the finish hook run from main then ran the full suite in the worktree, 2040/2040 across 170 files, and a second finish ran nothing."
+    },
+    "suite-stamp.mjs": {
+      "project": "interplanetary-groups",
+      "on": "2026-09-24",
+      "how": "Post-merge live check 24 Sept 2026, IPG main e6e0e68: a real harness-fired edit in a worktree recorded that worktree for the session; the finish hook run from main then ran the full suite in the worktree, 2040/2040 across 170 files, and a second finish ran nothing."
+    },
+    "run-tests-unless-docs.mjs": {
+      "project": "interplanetary-groups",
+      "on": "2026-09-24",
+      "how": "Post-merge live check 24 Sept 2026, IPG main e6e0e68: a real harness-fired edit in a worktree recorded that worktree for the session; the finish hook run from main then ran the full suite in the worktree, 2040/2040 across 170 files, and a second finish ran nothing."
+    },
+    "full-suite-on-subagent-stop.mjs": {
+      "project": "interplanetary-groups",
+      "on": "2026-09-24",
+      "how": "Post-merge live check 24 Sept 2026, IPG main e6e0e68: a real harness-fired edit in a worktree recorded that worktree for the session; the finish hook run from main then ran the full suite in the worktree, 2040/2040 across 170 files, and a second finish ran nothing."
     },
     "suite-lock.mjs": {
       "project": "interplanetary-groups",
-      "on": "2026-09-04",
-      "how": "22 tests green in its suite (1777/149) and on main at 7cfe9cd; overlap proof: a second run waited 52s then succeeded, heartbeat advanced mid-run"
+      "on": "2026-09-24",
+      "how": "Post-merge live check 24 Sept 2026, IPG main e6e0e68: a real harness-fired edit in a worktree recorded that worktree for the session; the finish hook run from main then ran the full suite in the worktree, 2040/2040 across 170 files, and a second finish ran nothing."
     }
   }
 }

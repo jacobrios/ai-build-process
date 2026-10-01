@@ -84,10 +84,11 @@
 // WIRING (per project, in vitest.config.ts):
 //   globalSetup: ["./.claude/hooks/suite-lock.mjs"]
 
+import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { isAbsolute, join, resolve } from "node:path"
 
 const LOCK_DIR = join(tmpdir(), "claude-suite-locks")
 
@@ -155,10 +156,39 @@ const POLL_MS = 250
  */
 export const HELD_ENV = "CLAUDE_SUITE_LOCK_HELD"
 
-/** Where this project's lock lives. Exported so tests can inspect and corrupt it. */
+/**
+ * Where this project's lock lives. Exported so tests can inspect and corrupt it.
+ *
+ * ONE LOCK PER REPOSITORY, NOT PER FOLDER (24 Sept 2026). The lock exists because
+ * the tests share one database, and every git worktree of a repository shares it
+ * too. Keyed on the folder, two worktrees each got their own lock and never
+ * waited for each other, which this project's own record had already noted as an
+ * open gap. Nobody saw it bite only because the test hooks were testing the
+ * main checkout from every worktree, so every run happened to share main's lock.
+ * Fixing the hooks to test the real worktree would have removed that accidental
+ * protection, so the two changes had to land together.
+ *
+ * Re-entrancy is unaffected: a nested run computes the same path as its parent,
+ * because both are in the same repository, and HELD_ENV still matches. A
+ * folder that is not a git repository keys on its path, exactly as before.
+ */
 export function lockPath(root) {
-  const key = createHash("sha256").update(resolve(String(root))).digest("hex").slice(0, 16)
+  const key = createHash("sha256").update(lockIdentity(root)).digest("hex").slice(0, 16)
   return join(LOCK_DIR, `${key}.lock`)
+}
+
+function lockIdentity(root) {
+  const dir = resolve(String(root))
+  try {
+    const out = execFileSync("git", ["-C", dir, "rev-parse", "--git-common-dir"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2000,
+    }).trim()
+    return realpathSync(isAbsolute(out) ? out : resolve(dir, out))
+  } catch {
+    return dir
+  }
 }
 
 function readHolder(path) {

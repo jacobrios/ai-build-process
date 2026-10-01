@@ -34,13 +34,15 @@
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { classifyProbe } from "./db-probe.mjs"
-import { resolveProjectRoot } from "./project-root.mjs"
+import { realpathSync } from "node:fs"
+import { resolveWorkRoot } from "./project-root.mjs"
 import {
   clearOutage,
   markOutageAnnounced,
   needsFullRun,
   outageAnnounced,
   recordFullRun,
+  workRootsFor,
 } from "./suite-stamp.mjs"
 
 const PROBE = fileURLToPath(new URL("./db-probe.mjs", import.meta.url))
@@ -65,15 +67,80 @@ function defaultProbe(root) {
  * clock injectable so the tests neither run a suite inside a suite nor wait on
  * real time.
  */
-export function runStop({
-  shellCwd,
-  spawn = defaultSpawn,
-  probe = defaultProbe,
-  now = Date.now,
-  stopHookActive = false,
-  warn = console.error,
-}) {
-  const root = resolveProjectRoot(shellCwd)
+export function runStop({ shellCwd, sessionId = "", ...rest }) {
+  // Which checkouts (24 Sept 2026): every checkout this session's edits were
+  // recorded in, because the shell may have moved since, PLUS the one the shell
+  // is standing in. See suite-stamp.mjs for the incident.
+  //
+  // Both, not the list with the shell as a fallback: the first version trusted
+  // any non-empty list completely, so a checkout whose edit never reached the
+  // list was never checked even with the shell standing in it (first review).
+  //
+  // NOT the folder the session was opened in, which the second version also
+  // added: that made a session working only in its worktree run, and be held by,
+  // the main checkout's owed suite from ANOTHER session (second review). The
+  // session's own records already name every checkout it touched. The one case
+  // this gives up is a hook call with no session id at all, where the old anchor
+  // would also have been checked; the harness sends one on every call.
+  const seen = new Set()
+  const owed = []
+  for (const r of [...workRootsFor(sessionId), resolveWorkRoot({ shellCwd })]) {
+    const key = canonical(r)
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (needsFullRun(r)) owed.push(r)
+  }
+  if (owed.length === 0) return 0
+
+  // AT MOST ONE FULL SUITE PER FINISH. The hook has a 600 second limit and one
+  // run can wait up to 300 seconds for the suite lock, so two in one finish can
+  // be killed. A killed run never records that it ran, so the next finish would
+  // try the same two and be killed the same way, forever, with nothing on screen
+  // (second review). So run one, and if another checkout still owes a run, hold
+  // the finish and say so; the next finish runs the next one.
+  const code = stopOne(owed[0], rest)
+  if (code !== 0 || owed.length === 1) return code
+
+  // stopOne also returns 0 without a green run: when the database is down and the
+  // outage is already announced, and when a held agent's suite fails and is let
+  // go. It says why in those cases. So "passed" is claimed, and another finish
+  // asked for, only when the run actually recorded itself green: the stamp is
+  // the one witness that cannot overstate it.
+  if (needsFullRun(owed[0])) return 0
+
+  const warn = rest.warn || console.error
+  const more = owed.slice(1).join(", ")
+  if (rest.stopHookActive) {
+    // Already held once, and this gate never holds twice. Named, not dropped: the
+    // debt stays on each checkout's own stamp for the next finish.
+    warn(
+      `The full suite passed in ${owed[0]}. This also still owes a full run, which ` +
+        `this gate will not hold the agent a second time for: ${more}. It runs at ` +
+        "the next finish, and the PR's before-and-after test numbers are the backstop."
+    )
+    return 0
+  }
+  warn(
+    `The full suite passed in ${owed[0]}. This also still owes a full run: ${more}. ` +
+      "Only one suite runs per finish, to stay inside the hook's time limit, so " +
+      "finish again and it runs next."
+  )
+  return 2
+}
+
+/** One spelling per folder, so /var and /private/var are not checked twice. */
+function canonical(dir) {
+  try {
+    return realpathSync(dir)
+  } catch {
+    return dir
+  }
+}
+
+function stopOne(
+  root,
+  { spawn = defaultSpawn, probe = defaultProbe, now = Date.now, stopHookActive = false, warn = console.error }
+) {
   if (!needsFullRun(root)) return 0
 
   // Database first (23 Sept 2026). An unreachable database means: do not run
@@ -147,6 +214,7 @@ function main() {
 
     const code = runStop({
       shellCwd: data && data.cwd,
+      sessionId: data && data.session_id,
       stopHookActive: Boolean(data && data.stop_hook_active),
     })
 

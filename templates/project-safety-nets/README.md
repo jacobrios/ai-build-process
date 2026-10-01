@@ -239,6 +239,27 @@ remote round trip on every edit forever. Reviewed by the session that hit the
 outage, which caught the gap that shaped the design: under exit 0 a stop hook's
 stderr never reaches the agent, so a silent skip would look like a pass.
 
+**24 September 2026: the test gate follows the work into git worktrees.** A
+session opened in interplanetary-groups' main checkout did all its work in a
+worktree, and both test hooks ran MAIN's suite, because they anchored on
+`CLAUDE_PROJECT_DIR`, which the harness never moves. The gate never saw the
+branch being built. Now the per-edit hook tests the checkout holding the edited
+file (`resolveWorkRoot` in `project-root.mjs`) and records it against the session;
+the finish hook tests the checkouts the session recorded plus the one the shell
+stands in, never trusting the shell alone because it moves mid-session. It never
+follows the work into a different repository. **The suite lock is now one per
+repository, not one per folder**, and the two had to land together: before, the
+bug made every worktree test main and so share main's lock by accident, and
+fixing the hooks alone would have sent every worktree at the one database at
+once. **One full suite runs per finish**, holding the finish if another checkout
+still owes one, because two runs in one finish can overrun the 600 second hook
+limit, and a killed run never records itself, so it would fail identically every
+finish after. Two independent reviews found six real defects, all fixed, and
+every fix was proven by breaking it on purpose; that record is in `worktree.test.ts`.
+**Adopting it means copying all five changed `.mjs` files together** plus the two
+new test files: a project with the new hooks and the old lock gets exactly the
+database collision described above.
+
 **12 August 2026, from interplanetary-groups PR #64: the test gate split in
 two, and the reason is a number.** The owner reported build runs going from
 about ninety minutes to between two and four hours. Measured across the session
