@@ -49,13 +49,28 @@ process.stdin.on("end", () => {
 
   const cmd = (data && data.tool_input && data.tool_input.command) || "";
   if (!/(^|[;&|]|\s)gh\s+pr\s+create\b/.test(cmd)) process.exit(0);
-  if (/\s(--help|-h)\b/.test(cmd)) process.exit(0);
+
+  // EVERY FLAG IS READ FROM THE `gh pr create` INVOCATION ONWARD, NEVER THE WHOLE LINE.
+  // Other commands on the same line use the same letters for unrelated things, and
+  // each check below once read them, in BOTH directions:
+  //   - Blocking correct work: `git commit -F -` (a commit message from stdin) was read
+  //     as the PR body, so three correct PRs were refused on 23 Sept 2026 while gh's
+  //     real --body-file sat further along, unexamined.
+  //   - Letting a PR through with no review, which is worse: found by a re-check an
+  //     hour after that fix, which had scoped only the --body-file check. An unrelated
+  //     `-h` (df -h, ls -h) matched the --help escape and passed anything. An unrelated
+  //     `-b` (git checkout -b) routed the line to the inline-body check, so a review
+  //     heading in a COMMIT message passed a --fill PR that carried no review at all.
+  const ghAt = cmd.search(/(^|[;&|]|\s)gh\s+pr\s+create\b/);
+  const ghCmd = cmd.slice(ghAt);
+
+  if (/\s(--help|-h)\b/.test(ghCmd)) process.exit(0);
 
   const cwd = data.cwd || process.cwd();
   let body = null;
   let why = null;
 
-  const file = cmd.match(/\s(?:--body-file|-F)(?:=|\s+)(\S+)/);
+  const file = ghCmd.match(/\s(?:--body-file|-F)(?:=|\s+)(\S+)/);
   if (file) {
     const path = file[1].replace(/^["']|["']$/g, "");
     if (path === "-") why = "the body comes from stdin, which this guard cannot read";
@@ -63,14 +78,26 @@ process.stdin.on("end", () => {
       try {
         body = readFileSync(resolve(cwd, path), "utf8");
       } catch {
-        why = `the body file ${path} could not be read`;
+        // A body file WRITTEN EARLIER IN THIS SAME COMMAND does not exist yet: the
+        // hook runs before the command does. Blocking is correct (an unread body is
+        // an unverified one), but the old message sent people hunting for a typo, so
+        // it names the cause and the remedy instead.
+        const writtenHere = new RegExp(`>\\s*["']?${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(cmd);
+        why = writtenHere
+          ? `the body file ${path} is written by this same command, so it does not exist yet ` +
+            `when this check runs. Write it in one Bash call, then open the PR in the next one.`
+          : `the body file ${path} could not be read`;
       }
     }
-  } else if (/\s(?:--body|-b)(?:=|\s)/.test(cmd)) {
+  } else if (/\s(?:--body|-b)(?:=|\s)/.test(ghCmd)) {
     // The body is embedded in the command (quoted string or heredoc), and shell
     // quoting is not worth parsing: check the whole command text for the report.
+    // The whole LINE is checked here, not just gh's part, on purpose: a body built
+    // first and passed in a variable (`BODY=$(...) && ... --body "$BODY"`) carries its
+    // review before the gh call. Known residual, accepted: an explicit --body with no
+    // review still passes if a review heading appears elsewhere on the same line.
     body = cmd;
-  } else if (/\s(--fill|--fill-first|--fill-verbose|--web|-w)\b/.test(cmd)) {
+  } else if (/\s(--fill|--fill-first|--fill-verbose|--web|-w)\b/.test(ghCmd)) {
     why = "the body is generated or written elsewhere, so it cannot carry the review report";
   } else {
     why = "no --body or --body-file was given";

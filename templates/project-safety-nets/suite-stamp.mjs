@@ -13,12 +13,18 @@
 // or explorer agent that changed nothing has nothing unverified behind it.
 //
 // Stamps live in the system temp directory, keyed by a hash of the project
-// path, for two reasons. Nothing enters the repo, so there is no .gitignore to
-// keep in step. And a cleared temp directory fails safe by the rule above: the
-// run stamp disappears alongside the edit stamp, and the next finish runs.
+// path, because nothing then enters the repo and there is no .gitignore to keep
+// in step. ~~And a cleared temp directory fails safe by the rule above: the run
+// stamp disappears alongside the edit stamp, and the next finish runs.~~
+// (Corrected 24 Sept 2026, second review: that was false. With the edit stamp
+// gone, needsFullRun reads "nothing was ever edited" and the finish SKIPS. A
+// cleared temp directory therefore silently forgives every owed run, and since
+// 24 Sept the session's list of edited checkouts lives here too and goes with
+// it. The OS clears this directory on reboot, rarely mid-session, so this was
+// accepted rather than moved into the repo, but it fails toward green, not safe.)
 
 import { createHash } from "node:crypto"
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
@@ -103,6 +109,83 @@ export function needsFullRun(root) {
   if (ranAt === null || Number.isNaN(ranAt)) return true
 
   return editedAt >= ranAt
+}
+
+// WHERE THIS SESSION'S EDITS WENT (24 Sept 2026)
+//
+// The edit stamps above are per checkout, and they have to stay that way: a
+// worktree and the main checkout owe separate runs. But the finish hook is only
+// told where the shell is standing, and the shell moves. On 23-24 Sept 2026 a
+// session's edits were all in a worktree, and its shell was later sent back to
+// the main checkout when the owner ran a command in the terminal pane, so a
+// finish hook trusting the shell would have tested main and found nothing owed.
+//
+// So each edit also records WHICH checkout it landed in, against the session,
+// and the finish hook checks every checkout on that list AS WELL AS the shell's
+// and the session's own (see full-suite-on-subagent-stop.mjs). Per session
+// rather than per repository: a repository-wide list would have one SESSION's
+// finish run, and be blocked by, another session's work in a different worktree.
+//
+// What that does NOT isolate, stated because the first version of this comment
+// claimed more: helper agents inside one session. If they share the session's id,
+// which is believed but unverified, one helper's finish checks another helper's
+// worktree too, and can be held by its red suite. That errs toward running more,
+// never less, and a held finish is loud; it was accepted rather than solved,
+// since separating them needs an agent identity the hook input may not carry.
+
+/** Where one session's list of edited checkouts lives. Exported so tests can clean it up. */
+export function sessionRootsPath(sessionId) {
+  const key = createHash("sha256").update(String(sessionId)).digest("hex").slice(0, 16)
+  return join(STAMP_DIR, `session-${key}.roots`)
+}
+
+/**
+ * Add a checkout to this session's list.
+ *
+ * APPEND-ONLY, and that is the point. The first version read the list, added
+ * one, and rewrote the whole file. Two edits at the same instant each read the
+ * list before the other wrote, and the second write erased the first: that
+ * checkout still owed a run, but the list no longer named it, so the finish never
+ * checked it and reported green. Reproduced with twenty real processes before the
+ * fix, found by the independent review. An append of one short line is not
+ * interleaved with another on a local disk, so writers can only ever add. The
+ * worst a race can now do is write one line twice, which reading removes.
+ */
+export function recordWorkRoot(sessionId, root) {
+  if (!sessionId) return
+  const path = sessionRootsPath(sessionId)
+  const canonical = canonicalRoot(root)
+  if (readRoots(path).includes(canonical)) return // saves growth; racing past it only duplicates
+  mkdirSync(STAMP_DIR, { recursive: true })
+  appendFileSync(path, canonical + "\n")
+}
+
+/**
+ * The checkouts this session edited that still exist, each once. A worktree
+ * deleted since is dropped, since blocking every later finish on a folder that
+ * is gone would be worse. An unreadable list reads as empty; the finish still
+ * checks the shell's and the session's own checkout regardless.
+ */
+export function workRootsFor(sessionId) {
+  if (!sessionId) return []
+  return [...new Set(readRoots(sessionRootsPath(sessionId)))].filter((r) => existsSync(r))
+}
+
+function readRoots(path) {
+  try {
+    return readFileSync(path, "utf8").split("\n").map((l) => l.trim()).filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function canonicalRoot(root) {
+  const absolute = resolve(String(root))
+  try {
+    return realpathSync(absolute)
+  } catch {
+    return absolute
+  }
 }
 
 // The one-per-outage marker (23 Sept 2026). When the database will not answer,

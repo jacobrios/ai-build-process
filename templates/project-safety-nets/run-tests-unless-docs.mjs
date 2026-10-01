@@ -18,8 +18,8 @@
 // green having run a fraction of what it claimed (measured here: 5 of 801).
 
 import { spawnSync } from "node:child_process"
-import { resolveProjectRoot } from "./project-root.mjs"
-import { markEdited } from "./suite-stamp.mjs"
+import { resolveWorkRoot } from "./project-root.mjs"
+import { markEdited, recordWorkRoot } from "./suite-stamp.mjs"
 
 function defaultSpawn(cwd, args) {
   return spawnSync("npx", args, { stdio: "inherit", cwd }).status
@@ -32,13 +32,30 @@ function defaultSpawn(cwd, args) {
 export function runEdit({
   filePath,
   shellCwd,
+  sessionId = "",
   spawn = defaultSpawn,
   mark = markEdited,
+  record = recordWorkRoot,
 }) {
   const path = String(filePath || "")
   if (path.toLowerCase().endsWith(".md")) return 0
 
-  const root = resolveProjectRoot(shellCwd)
+  // The checkout holding the edited file, not the folder the session opened in.
+  // See project-root.mjs for the worktree incident this follows from.
+  const root = resolveWorkRoot({ filePath: path, shellCwd })
+
+  // Tell the finish hook where this session's work went, since by the time it
+  // runs the shell may have moved. If that note cannot be written, the finish may
+  // never check this checkout, so it is treated exactly like a stamp that cannot
+  // be written below: verify the whole suite now rather than narrowly. (The first
+  // version stayed quiet here on the grounds that the finish would fall back to
+  // the shell. It only did that when the list was empty; review caught it.)
+  let recorded = true
+  try {
+    record(sessionId, root)
+  } catch {
+    recorded = false
+  }
 
   // Marked before the run, and regardless of how the run goes. A narrow pass is
   // not proof the suite is green, and a narrow failure leaves the edit no less
@@ -58,7 +75,7 @@ export function runEdit({
 
   // With no path there is nothing to narrow to, so fall back to everything.
   const args =
-    path && stamped
+    path && stamped && recorded
       ? ["vitest", "related", "--run", "--passWithNoTests", path]
       : ["vitest", "run"]
 
@@ -79,6 +96,7 @@ function main() {
     const code = runEdit({
       filePath: (data && data.tool_input && data.tool_input.file_path) || "",
       shellCwd: data && data.cwd,
+      sessionId: data && data.session_id,
     })
 
     if (code !== 0) {
