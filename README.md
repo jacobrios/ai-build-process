@@ -28,7 +28,7 @@ The rules in this repo serve those two gates: making a check specific enough to 
 | **[templates/](templates/)** | Reference implementations copied into new projects: test gates, protection for migrations and environment files, and a script that proves which database a project is pointed at. |
 | **[checklists/](checklists/)** | The two procedures worth a file: starting or adopting a project, and handing over a pull request. |
 | **[output-styles/](output-styles/)**, **[skills/](skills/)**, **[bin/](bin/)** | How responses are formatted, one custom skill, and the few commands run by hand rather than automatically. |
-| **[tools/](tools/)** | The script that generates this repo from my private configuration, with its tests. |
+| **[tools/](tools/)** | The script that brings the mirrored files here across from my private configuration, its tests, and the list of lines its privacy scan has been told are fine to publish. |
 
 ---
 
@@ -48,7 +48,7 @@ The rules in this repo serve those two gates: making a check specific enough to 
 
 **`settings.json`, and the decision record explaining it.** The live configuration carries a block profiling other projects: their deploy URLs, how their secrets are held, which branches nothing mechanically protects. No credentials, but an operational map of other repositories. `decisions/access-protections.md`, which is the reasoning behind that configuration, is held back for the same reason: it is that map again, in more readable prose. Not because it admits the guards have gaps. Each hook here documents its own limits in its own header, deliberately, and a guard whose weaknesses are only in the author's head is worth less than one whose weaknesses are written down. What that record adds is aggregation: every gap, every permission, and every repository in one place, which is a different object from any one of them. Other files here point at it by name; those links resolve on the working machine and not in this copy. The hook wiring it holds is in `hooks/` and the template's README.
 
-**Passages I've marked private, inside files that are otherwise here.** As of this writing they are all in `decisions/rule-lineage.md`, each one operational detail about another repository, the same kind of thing `settings.json` is held back for. Dropping a whole document to hide a paragraph would have cost the document, so the passage is left out and a notice sits in its place: *(Withheld from the public mirror: the reason)*. If you meet one, that is all it means. Something was left out on purpose, and the notice says why.
+**Passages I've marked private, inside files that are otherwise here.** As of this writing they are all in `decisions/rule-lineage.md`. Dropping a whole document to hide a paragraph would have cost the document, so the passage is left out and a notice sits in its place: *(Withheld from the public mirror: the reason)*. If you meet one, that is all it means. Something was left out on purpose, and the notice says why.
 
 **Conversation transcripts, plugin caches, and anything machine-specific.** Those live in the private configuration backup this repo is drawn from.
 
@@ -65,4 +65,4 @@ node tools/sync-from-source.mjs --check   # says whether the copy has fallen beh
 node tools/sync-from-source.mjs           # brings it up to date
 ```
 
-It copies the files across and deletes anything I removed from the original so an old rule can't live on here. It never rewrites what a file says. The one thing it takes out is a passage I've marked private in the original, and it replaces each one with a visible notice giving the reason.
+It copies the files across and deletes anything I removed from the original so an old rule can't live on here. It never rewrites what a file says. Inside a file, the one thing it takes out is a passage I've marked private in the original, and it replaces each one with a visible notice giving the reason.
